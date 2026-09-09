@@ -38,6 +38,12 @@ METHOD = "rank_neighbor_heuristic"
 
 
 def _git_commit():
+    # Release builds pin this via RELEASE_COMMIT env (set by CI/tag process);
+    # otherwise we report the commit the code last ran at. NOTE: self-referential
+    # if embedded in a committed artifact - one commit behind HEAD by design.
+    env = os.environ.get("RELEASE_COMMIT")
+    if env:
+        return env
     try:
         import subprocess
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
