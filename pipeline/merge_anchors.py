@@ -7,8 +7,17 @@ import json, os, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # dev-tree artifacts live one level above the repo checkout
-BASE = os.path.join(ROOT, "..", "anchors_harden_rescrape.jsonl")
-DELTA = os.path.join(ROOT, "..", "anchors_delta_parsed.jsonl")
+def _first(*paths):
+    for p in paths:
+        if os.path.exists(p):
+            return p
+    return paths[0]
+
+# Prefer repo-internal artifacts (CI/clean checkout); fall back to dev-tree files.
+BASE = _first(os.path.join(ROOT, "anchors_harden_rescrape.jsonl"),
+              os.path.join(ROOT, "..", "anchors_harden_rescrape.jsonl"))
+DELTA = _first(os.path.join(ROOT, "anchors_delta_parsed.jsonl"),
+               os.path.join(ROOT, "..", "anchors_delta_parsed.jsonl"))
 OUT = os.path.join(ROOT, "anchors", "anchors_harden.jsonl")
 
 

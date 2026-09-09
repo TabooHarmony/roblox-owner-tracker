@@ -44,9 +44,11 @@ def done_titles():
 
 
 def main():
+    # Title sources are always repo-internal; only OUT honors HARVEST_OUT_DIR.
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     titles = []
     for fn in ["anchors_wiki.jsonl", "anchors_wiki_extra.jsonl"]:
-        for l in open(os.path.join(ROOT, "anchors", fn)):
+        for l in open(os.path.join(repo_root, "anchors", fn)):
             titles.append(json.loads(l)["title"])
     titles = sorted(set(titles))
 

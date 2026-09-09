@@ -35,9 +35,22 @@ def validate(manifest):
     errs = []
     if not manifest.get("complete"):
         errs.append("incomplete walk")
+    # A 'complete' walk must SHOW its work: pages with per-page provenance and a
+    # finished timestamp. An empty pages list proves nothing was walked (Astra #8).
+    pages = manifest.get("pages", [])
+    if manifest.get("complete") and not pages:
+        errs.append("complete=true but pages list is empty (no per-page provenance)")
+    if manifest.get("complete") and not manifest.get("finished_utc"):
+        errs.append("complete=true but no finished_utc (snapshot timestamp required)")
+    if manifest.get("complete") and pages:
+        n = sum(1 for p in pages if p.get("count"))
+        if n == 0:
+            errs.append("pages present but all have count=0/missing")
+    if manifest.get("n_items", 0) == 0:
+        errs.append("manifest records zero items")
     if manifest.get("n_duplicate_ids", 0) > manifest.get("n_items", 0) * 0.01:
         errs.append("duplicate ratio exceeds 1%")
-    for i, p in enumerate(manifest.get("pages", [])):
+    for i, p in enumerate(pages):
         for k in ("cursor", "fetched_utc", "count"):
             if k not in p:
                 errs.append(f"page {i} missing {k}")

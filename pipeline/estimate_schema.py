@@ -21,7 +21,6 @@ schemas for the same item, 'UNCHANGED' carry-forward (failed revalidation
 abstains with STALE_RESULT instead of silently repeating an old number).
 """
 import json, os, sys
-from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bracket
@@ -35,12 +34,22 @@ CANON = {
 }
 
 
-def row(item, item_id, result, snapshot_utc=None, pool_manifest=None):
+def row(item, item_id, result, snapshot_utc, pool_manifest=None):
+    """snapshot_utc is REQUIRED and must come from the pool manifest
+    (finished_utc of the walk that produced the pool). No wall-clock fallback:
+    identical inputs must produce identical bytes (Astra #7 regression fix)."""
+    if not snapshot_utc:
+        return {"schema": 2, "item": item, "item_id": int(item_id),
+                "status": "ABSTAIN",
+                "abstain_reason": "NO_SNAPSHOT_PROVENANCE: pool manifest has no finished_utc; "
+                                  "a bracket needs a timestamped walk (no wall-clock substitution)",
+                "warnings": [], "anchors": None, "pool_manifest": pool_manifest,
+                "confidence": None, "bracket": None}
     r = dict(CANON)
     r.update({
         "item": item,
         "item_id": int(item_id),
-        "snapshot_utc": snapshot_utc or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "snapshot_utc": snapshot_utc,
         "status": result["status"],
     })
     if result["status"] == "ESTIMATE":

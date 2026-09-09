@@ -103,22 +103,47 @@ class TestEngine(unittest.TestCase):
         r = bracket.rank_bracket([1, 2, 3], 2, anchors)
         self.assertEqual(r["status"], "ABSTAIN")
 
-    def test_unpaired_upper_flagged(self):
+    def test_unpaired_upper_abstains(self):
+        # Astra re-audit #2: an unpaired count is a lower bound of the anchor's
+        # own count, never a finite upper endpoint for the target.
         anchors = {
             "1": {"purchased": None, "unpaired_purchased": 20000, "sale_state": "closed", "until": "June 12, 2019"},
-            "3": {"purchased": 3000, "sale_state": "closed", "until": "March 5, 2020"},
+            "3": {"purchased": 3000, "purchased_as_of": "March 5, 2020", "sale_state": "closed", "until": "March 5, 2020"},
         }
         r = bracket.rank_bracket([1, 2, 3], 2, anchors)
-        self.assertEqual(r["status"], "ESTIMATE")
-        self.assertTrue(any("unpaired" in w for w in r["warnings"]))
+        self.assertEqual(r["status"], "ABSTAIN")
+        self.assertEqual(r["reason"], "NO_ELIGIBLE_ANCHOR_ABOVE")
+        self.assertIn("unpaired", bracket.anchor_eligible(anchors["1"])[1])
 
     def test_wide_bracket_low_confidence(self):
         anchors = {
-            "1": {"purchased": 1000000, "sale_state": "closed", "until": "June 12, 2019"},
-            "3": {"purchased": 1000, "sale_state": "closed", "until": "March 5, 2020"},
+            "1": {"purchased": 1000000, "purchased_as_of": "June 12, 2019", "sale_state": "closed", "until": "June 12, 2019"},
+            "3": {"purchased": 1000, "purchased_as_of": "March 5, 2020", "sale_state": "closed", "until": "March 5, 2020"},
         }
         r = bracket.rank_bracket([1, 2, 3], 2, anchors)
         self.assertEqual(r["confidence"], "LOW")
+
+    def test_stale_count_rejected(self):
+        # Astra re-audit #2: count observed BEFORE closure is not the final count.
+        anchors = {
+            "1": {"purchased": 20000, "purchased_as_of": "April 27, 2019", "sale_state": "closed", "until": "September 16, 2019"},
+            "3": {"purchased": 3000, "purchased_as_of": "March 5, 2020", "sale_state": "closed", "until": "March 5, 2020"},
+        }
+        ok, why = bracket.anchor_eligible(anchors["1"])
+        self.assertFalse(ok)
+        self.assertIn("stale", why)
+
+    def test_cli_batch_id_type_agreement(self):
+        # Astra re-audit: CLI passed int, batch passed str -> different results.
+        anchors = {
+            "1": {"purchased": 20000, "purchased_as_of": "June 12, 2019", "sale_state": "closed", "until": "June 12, 2019"},
+            "3": {"purchased": 3000, "purchased_as_of": "March 5, 2020", "sale_state": "closed", "until": "March 5, 2020"},
+        }
+        pool_str = ["1", "2", "3"]
+        r_str = bracket.rank_bracket(pool_str, "2", anchors)
+        r_int = bracket.rank_bracket(pool_str, 2, anchors)
+        self.assertEqual(r_str["status"], r_int["status"])
+        self.assertEqual(r_str.get("bracket"), r_int.get("bracket"))
 
     def test_conflicting_pools_abstain(self):
         r = bracket.merge_pools(

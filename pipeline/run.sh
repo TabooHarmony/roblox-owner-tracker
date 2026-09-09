@@ -14,14 +14,24 @@ case "$cmd" in
     ;;
   harvest)
     "$PY" pipeline/rescrape_all.py
-    "$PY" pipeline/rescrape_delta.py
     "$PY" pipeline/merge_anchors.py
     "$PY" pipeline/validate.py
     ;;
+  pools)
+    # provenance-complete pool re-walk for all published targets
+    "$PY" pipeline/walk_pools.py pools/walk_targets.json
+    ;;
   estimate)
+    # pools must exist and carry valid manifests; estimates abstain otherwise
     "$PY" pipeline/estimate.py
+    "$PY" pipeline/validate.py
+    ;;
+  all)
+    "$0" harvest
+    "$0" pools
+    "$0" estimate
     ;;
   help|*)
-    echo "usage: pipeline/run.sh {tests|validate|harvest|estimate}"
+    echo "usage: pipeline/run.sh {tests|validate|harvest|pools|estimate|all}"
     ;;
 esac

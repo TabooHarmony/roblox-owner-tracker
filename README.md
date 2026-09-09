@@ -30,9 +30,15 @@ explicit `ABSTAIN` record with a reason — never a made-up interval.
 
     pipeline/parse_wiki.py      hardened wikitext -> anchor record parser
     pipeline/bracket.py         pool walk + rank-bracket engine with abstention
+    pipeline/parse_wiki.py      hardened wikitext -> anchor record parser
+    pipeline/bracket.py         rank-bracket engine with abstention
     pipeline/rescrape_all.py    full wiki re-harvest (resume-safe, rev-pinned)
-    pipeline/rescrape_delta.py  delta re-harvest (rows lacking purchase info)
-    pipeline/backfill_rev.py    pin revision IDs onto existing records
+    pipeline/walk_pools.py      provenance-complete pool walker (per-page hashes)
+    pipeline/estimate.py        batch estimates (targets defined in-file)
+    pipeline/estimate_cli.py    single-item estimates (same engine, same result)
+    pipeline/coverage_test.py   held-out anchor coverage experiment
+    pipeline/validate.py        schema gate over anchors + estimates
+    pipeline/backfill_rev.py    RETIRED (fabricated provenance; fails loudly)
     pipeline/run.sh             CLI entry point: fetch/parse/bracket/validate
     anchors/                    anchor database (JSONL, schema v2)
     pools/                      pool-walk manifests (provenance + item IDs)
@@ -52,7 +58,15 @@ Full re-harvest (network, ~35 min, resumable):
     pipeline/run.sh harvest
 
 Every anchor record pins the wiki revision ID it was parsed from, so any
-published estimate can be traced to the exact page revision it used.
+published estimate can be traced to the exact page revision it used. Revision
+ids are captured in the same API call as the wikitext; post-hoc backfilling is
+fabricated provenance and is a hard error (`backfill_rev.py` refuses to run).
+
+Every pool snapshot carries a provenance manifest (query params, per-page
+cursors, fetch timestamps, response hashes, finished_utc). A pool whose
+manifest cannot prove a complete, timestamped walk is rejected:
+`estimates` ABSTAIN with `INVALID_POOL`, they do not fall back to wall-clock
+timestamps or unproven walks.
 
 ## Schema
 
@@ -66,8 +80,11 @@ Parser rules that matter:
 - Purchase/favorite counts are kept ONLY when paired with an `As of <date>` in
   the same or the immediately following sentence. Unpaired counts are stored
   separately (`unpaired_purchased`) as lower-bound candidates, never used as
-  exact anchors. The old "N copies available" fallback is gone: copies
+  anchor endpoints. The old "N copies available" fallback is gone: copies
   available is not copies sold.
+- A closed item's count is final ONLY if observed at or after its closure date
+  (`purchased_as_of >= until`). A count observed before closure is stale and
+  rejected (73 such rows in the first hardened pass).
 - Availability is case-insensitive and 3-state. `Still available` and
   `Still Available` are the same thing; the old harvesters disagreed and misfiled
   6,256 rows because of a capital letter.

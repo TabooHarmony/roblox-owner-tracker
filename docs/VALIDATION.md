@@ -1,53 +1,88 @@
-# Validation status
+# Validation
 
-## What was measured (2026-09-09, anchors_harden.jsonl, rev-pinned)
+Status: **experimental**. These are uncalibrated rank-neighbor estimates —
+leads, not bounds. Published numbers below are from the held-out experiment
+described here, run against the shipped (provenance-clean) anchors and pools.
 
-Held-out anchor test on the three published pools (party, stormbreak, crown;
-990-1,000 items each, same taxonomy slice). For every eligible closed-final
-anchor in a pool, hide the eligible anchors within a rank radius R and bracket
-the hidden target from outside R only.
+Method origin: the bestseller/rainbow-anchor bracketing method is Maggy's
+(Maggy Rarefication). This repo is an engineering implementation of it.
 
-`pipeline/coverage_test.py`, all three published pools:
+## What the method can and cannot claim
 
-| pool | R=1 | R=2 | R=5 | R=10 |
-|---|---|---|---|---|
-| party (37 eligible) | 9/9 (2.2x) | 14/14 (2.8x) | 20/20 (4.4x) | 26/26 (7.0x) |
-| stormbreak (27 eligible) | n/a | 6/6 (1.5x) | 14/14 (4.0x) | 17/17 (3.3x) |
-| crown (41 eligible) | 2/2 (2.3x) | 7/8 = 88% (2.3x) | 14/17 = 82% (1.8x) | 23/27 = 85% (3.7x) |
+- An anchor's post-closure purchase count is exact (observed on the wiki).
+- The target's count is bracketed between two such anchors by sales rank.
+- The identifiability gap is real: anchor agreement does NOT prove the target
+  sits between them. Rank order is a proxy, not a guarantee. Treat every
+  bracket as a plausible range, never as a bound.
+- Brackets do not carry a coverage probability. Width is not confidence.
 
-Cells: coverage n/n (median bracket width). Aggregate: 154/160 = 96%,
-widths 1.5x-7.0x. Zero abstentions (the engine always found outside-R anchors).
+## Eligibility rules (enforced by the engine, not by convention)
 
-Earlier K-gap variant (hide K consecutive pool ranks, K=2..20): 92-100% per
-pool. Same picture: the crown pool is the weakest; party is the cleanest.
+An anchor is eligible only if ALL hold:
 
-## Reading this honestly
+1. `sale_state == "closed"` with a parsed `until` date.
+2. Paired purchase count: `purchased` with `purchased_as_of` in the same
+   sentence. Unpaired counts are lower bounds and are never endpoints.
+3. The count was observed AT OR AFTER closure (`purchased_as_of >= until`).
+   Stale pre-closure counts are rejected (the first hardened pass carried 73;
+   all are now flagged as warnings by `validate.py` and rejected as anchors).
 
-- Coverage here is measured on anchors that passed the eligibility filter
-  (closed-final, post-2012, paired count). It is NOT coverage over all items.
-- n is small (2-27 per cell). These are point estimates of coverage with huge
-  error bars; 100% at n=9 says little. The crown pool (82-88%) is the honest
-  read of the method's hit rate; party's 100% is the small-n mirage.
-- Width is the honest cost: brackets that survive holdout grow from ~2x at
-  immediate neighbors to ~7x at 10 eligible-neighbors out.
-- The 17% adjacent-pair inversion number is a DIFFERENT measurement (local
-  ordering noise), not a coverage probability. Do not mix them.
-- All pools tested come from one serving regime (SortType=2 bestseller slices,
-  same taxonomy). Other regimes are untested.
+## Pool provenance
 
-## What would change these conclusions
+Every pool ships a manifest: query parameters, per-page cursors, per-page
+fetch timestamps and response SHA-256s, and a `finished_utc`. The batch and
+CLI estimators both refuse a pool whose manifest does not prove a complete,
+timestamped walk (`ABSTAIN / INVALID_POOL`). Snapshot timestamps in
+`estimates_v2.jsonl` come from the manifest, never from the wall clock.
 
-- A target whose wiki purchase count is stale or vandalized breaks the
-  bracket silently. The parser now strips comments and requires paired
-  As-of dating, but the wiki itself is untrusted at some level.
-- Pools with mixed acquisition mechanisms (bundles, UARTs, UGC) were not
-  tested and the engine flags but does not handle them.
+## Held-out coverage experiment
 
-## Status
+`pipeline/coverage_test.py`: for each eligible anchor, hide the eligible
+anchors within rank radius R, bracket the target from outside R only, and
+check containment. Every skipped target (no eligible neighbor in R) is
+counted and reported; coverage is computed over attempts (estimate + abstain),
+never over estimates only; the aggregate sums pools, it does not average
+percentages.
 
-EXPERIMENTAL. Intervals are leads for manual investigation. Nothing here is a
-confidence bound. Confidence labels (HIGH/MEDIUM/LOW) encode width and anchor
-agreement heuristics only, calibrated to nothing.
+Run against the shipped data (2026-09-09):
 
-Method by Maggy (Maggy Rarefication); deterministic reimplementation and
-validation by this repo.
+    party (74 eligible of 948):      R=1 21/22  R=2 30/31  R=5 38/40  R=10 56/61
+    stormbreak (34 of 936):          R=1  0/2   R=2  5/7   R=5 12/13  R=10 22/23
+    crown (43 of 939):               R=1  0/0   R=2  6/6   R=5 16/16  R=10 31/31
+    confetti (26 of 732):            R=1  2/2   R=2  6/6   R=5 13/13  R=10 15/15
+    aggregate (pools summed):        R=1 23/26=88%   R=2 47/50=94%
+                                     R=5 79/82=96%   R=10 124/130=95%
+
+Median bracket widths: 1.3x-4.5x across R=1-10. Zero engine abstentions in
+attempts (abstentions shown separately where they occurred: party R=10 had 3).
+
+Honest caveats:
+
+- Per-pool cells are small (2-31 attempts). 100% at n=6 says little.
+- The crown pool's earlier 82-88% reading came from a run with stale-count
+  anchors allowed as endpoints; under the corrected eligibility rules it
+  reads 100% at R>=2, but n is too small to call that improvement rather
+  than noise. The aggregate (88-96% with skips reported) is the number to
+  quote, not any single pool.
+- Coverage measured this way is in-sample for the eligibility rules. It is
+  not a guarantee on future, unseen pools.
+
+## Determinism
+
+Identical inputs produce byte-identical outputs: the engine is pure-Python
+over shipped JSONL/JSON files; there is no wall-clock input anywhere in the
+estimate path (the snapshot timestamp is read from the pool manifest, and
+missing manifests are a hard abstain, not a fabricated timestamp).
+`estimate.py` (batch) and `estimate_cli.py` (single item) call the same
+`rank_bracket` with string-normalized IDs and return identical results;
+verified on all four targets against the shipped pools.
+
+## Release checklist (what blocks v1)
+
+- [x] one harvest -> merge -> estimate -> validate path from a clean checkout
+      (`pipeline/run.sh` / `make rescrape && make merge && make estimate`)
+- [x] identical CLI/batch behavior (verified per-target above)
+- [x] stale and unpaired anchors rejected as endpoints
+- [x] manifest-verified pool provenance; no fabricated timestamps
+- [x] single output schema (`estimates_v2.jsonl`); legacy files archived
+- [x] corrected, skip-aware coverage report (this document)

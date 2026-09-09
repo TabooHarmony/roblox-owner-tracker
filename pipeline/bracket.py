@@ -39,9 +39,12 @@ def parse_until(s):
 def anchor_eligible(rec):
     """Closed-final anchor check. Returns (ok, reason).
 
-    Eligible: sale_state == 'closed' with a validated until date >= MIN_CLOSED_YEAR.
-    A record with unpaired_purchased only is usable as a LOWER bound of its own
-    count (count only grows), but not as an exact value; flagged via 'unpaired'.
+    Eligible: sale_state == 'closed' with a validated until date >= MIN_CLOSED_YEAR,
+    a PAIRED purchase count (purchased + purchased_as_of), where the observation
+    date is not earlier than the closure date. A count observed before closure is
+    not the final count (Astra #2): purchases keep accruing until `until`.
+    Unpaired counts are lower bounds of the anchor's own count; they must never
+    serve as endpoints of a target bracket.
     """
     if rec.get("sale_state") != "closed":
         return False, f"not-closed-final ({rec.get('sale_state')})"
@@ -52,15 +55,28 @@ def anchor_eligible(rec):
         return False, f"unparseable until: {rec['until']}"
     if d[0] < MIN_CLOSED_YEAR:
         return False, f"pre-{MIN_CLOSED_YEAR} closure ({d[0]})"
-    if rec.get("purchased") is None and rec.get("unpaired_purchased") is None:
+    if rec.get("purchased") is None:
+        if rec.get("unpaired_purchased") is not None:
+            return False, "unpaired count only (lower bound, not final)"
         return False, "no purchase count"
+    a = parse_until(rec.get("purchased_as_of") or "")
+    if a is None:
+        return False, f"unparseable purchased_as_of: {rec.get('purchased_as_of')}"
+    if a < d:
+        return False, (f"stale count: observed {rec['purchased_as_of']} before "
+                       f"closure {rec['until']}; not the final count")
     return True, "ok"
 
 
 def rank_bracket(pool, target_id, anchors_db):
     """pool: ordered list of item ids (sales order, snapshot-local).
     anchors_db: dict id -> anchor record (hardened schema).
+    ID handling is type-normalized: pools store strings (catalog API ids),
+    anchors store ints; both lookups go through str(). The CLI passes an int,
+    the batch runner a string - identical behavior either way.
     Returns a result dict. NEVER a point estimate."""
+    pool = [str(x) for x in pool]
+    target_id = str(target_id)
     if target_id not in pool:
         return {"status": "ABSTAIN", "reason": "TARGET_NOT_IN_POOL",
                 "detail": "target absent from this pool snapshot; re-walk required"}
@@ -86,18 +102,14 @@ def rank_bracket(pool, target_id, anchors_db):
                 "detail": "; ".join(missing)}
 
     (ai, aa), (bi, ab) = above, below
-    # Unpaired counts are lower bounds of the anchor's true final count
-    # (purchases only grow; the dateless observation predates closure).
-    hi = aa["purchased"] if aa["purchased"] is not None else aa["unpaired_purchased"]
-    lo = ab["purchased"] if ab["purchased"] is not None else ab["unpaired_purchased"]
+    # anchor_eligible now guarantees paired final counts; endpoints are exact
+    # anchor observations, never unpaired lower bounds.
+    hi = aa["purchased"]
+    lo = ab["purchased"]
     warnings0 = []
-    if aa["purchased"] is None:
-        warnings0.append("upper anchor unpaired: its true count exceeds " + str(hi) + "; upper endpoint understated")
-    if ab["purchased"] is None:
-        warnings0.append("lower anchor unpaired: its true count exceeds " + str(lo) + "; lower endpoint understated")
     if hi is None or lo is None:
         return {"status": "ABSTAIN", "reason": "ANCHOR_COUNT_MISSING",
-                "detail": "eligible anchor has neither paired nor unpaired count"}
+                "detail": "eligible anchor has no paired count (defense in depth)"}
     if hi < lo:
         # monotonicity guard: approximate ordering means this CAN happen.
         # widen: the interval is still [lo, hi] as numbers, but the ordering
@@ -117,9 +129,9 @@ def rank_bracket(pool, target_id, anchors_db):
         "rank_in_pool": ti,
         "anchors": {
             "above": {"id": pool[ai], "rank": ai, "purchased": hi, "title": aa.get("title"),
-                      "until": aa.get("until"), "unpaired_only": aa.get("purchased") is None},
+                      "until": aa.get("until"), "purchased_as_of": aa.get("purchased_as_of")},
             "below": {"id": pool[bi], "rank": bi, "purchased": lo, "title": ab.get("title"),
-                      "until": ab.get("until"), "unpaired_only": ab.get("purchased") is None},
+                      "until": ab.get("until"), "purchased_as_of": ab.get("purchased_as_of")},
         },
         "quantity": "cumulative_purchases_lower_bound_interval",
         "note": "rank-neighbor interval, NOT a verified bound: ordering is approximate (measured ~17% local inversions)",
