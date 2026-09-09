@@ -1,0 +1,26 @@
+name: refresh-anchors
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"  # weekly, off the busy hour
+jobs:
+  rescrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Rescrape wiki anchors (hardened parser)
+        run: |
+          python3 pipeline/rescrape_all.py
+          python3 pipeline/backfill_rev.py
+      - name: Run fixture tests
+        run: python3 tests/test_pipeline.py
+      - name: Commit refreshed anchors
+        run: |
+          git config user.name "owner-tracker-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add anchors/
+          git diff --cached --quiet || git commit -m "anchor refresh: $(date -u +%F)"
+          git push
