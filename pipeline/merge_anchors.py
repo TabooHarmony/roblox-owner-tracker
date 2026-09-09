@@ -7,8 +7,8 @@ import json, os, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # dev-tree artifacts live one level above the repo checkout
-BASE = os.path.join(ROOT, "..", "..", "anchors_harden_rescrape.jsonl")
-DELTA = os.path.join(ROOT, "..", "..", "anchors_delta_parsed.jsonl")
+BASE = os.path.join(ROOT, "..", "anchors_harden_rescrape.jsonl")
+DELTA = os.path.join(ROOT, "..", "anchors_delta_parsed.jsonl")
 OUT = os.path.join(ROOT, "anchors", "anchors_harden.jsonl")
 
 
