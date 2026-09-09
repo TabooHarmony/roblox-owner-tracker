@@ -31,7 +31,13 @@ RE_PAIR_PUR = re.compile(
 RE_UNPAIRED_PUR = re.compile(r"(?:been|was) purchased ([\d,]+) times", re.I)
 RE_PAIR_FAV = re.compile(r"As of (" + DATE + r")[^.]*?(?:been |was )?favorited ([\d,]+) times", re.I)
 RE_PAIR_FAV2 = re.compile(r"(?:been |was )?favorited ([\d,]+) times[^.\n]*?As of (" + DATE + r")", re.I)
-RE_UNTIL = re.compile(r"^\s*\|\s*until\s*=\s*(.+?)\s*$", re.M)
+RE_UNTIL = re.compile(r"^\s*\|\s*until\d*\s*=\s*(.+?)\s*$", re.M)
+# Order-preserving extraction across ALL window fields (until, until2, until3, ...):
+# infobox order is window order on these pages. Sort key = position in the raw text,
+# so a page writing until2 before until still yields window order.
+def extract_untils(wt):
+    hits = [(m.start(), m.group(1).strip()) for m in RE_UNTIL.finditer(wt)]
+    return [u for _, u in sorted(hits, key=lambda t: t[0])]
 RE_DATE_ONLY = re.compile(r"^" + DATE + r"$|^\d{1,2} [A-Z][a-z]+ \d{4}$", re.I)
 RE_STILL = re.compile(r"still\s+available", re.I)
 
@@ -58,7 +64,7 @@ def parse(wt):
             notes.append("entity_type:bundle")
         else:
             notes.append("no_infobox_span_found") if not box else None
-    untils = [u.strip() for u in RE_UNTIL.findall(wt)]
+    untils = extract_untils(wt)
     still = any(RE_STILL.search(u) for u in untils)
     real_dates = [u for u in untils if RE_DATE_ONLY.match(u)]
     bad_untils = [u for u in untils if not RE_DATE_ONLY.match(u) and not RE_STILL.search(u)]
@@ -87,6 +93,13 @@ def parse(wt):
     if unresolved:
         rec["parse_ok"] = False
         rec["parse_notes"].append("unresolved_date_template:" + ";".join(unresolved[:3]))
+
+    # Dual-channel detector (Gate-B cross-validation finding): "purchased in the
+    # marketplace or in <experience>" pages may report only one channel's count
+    # (e.g. Vault Thief's Cloak: wiki 74 vs independent dump 3435). Flag; engine
+    # down-weights or rejects per policy.
+    if re.search(r"purchased in the marketplace or in .+?\]\]", wt, re.I):
+        rec["parse_notes"].append("multi_channel_sale:wiki count may cover one channel only")
 
     p = RE_PAIR_PUR.search(wt)
     if p:

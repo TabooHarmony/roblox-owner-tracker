@@ -58,11 +58,20 @@ def anchor_eligible(rec):
         return False, f"not-closed-final ({rec.get('sale_state')})"
     if not rec.get("until"):
         return False, "no until date"
-    d = parse_until(rec["until"])
-    if d is None:
-        return False, f"unparseable until: {rec['until']}"
-    if d[0] < MIN_CLOSED_YEAR:
-        return False, f"pre-{MIN_CLOSED_YEAR} closure ({d[0]})"
+    # Re-release guard (Gate-B cross-validation finding): until_history carries EVERY
+    # window close (until, until2, ...). A count must be observed after the LAST
+    # closure, not the first - mid-second-window counts are not final. Items whose
+    # final window closed pre-MIN_CLOSED_YEAR are rejected on the same basis.
+    history = rec.get("until_history") or [rec["until"]]
+    last_close = None
+    for u in history:
+        du = parse_until(u or "")
+        if du is not None and (last_close is None or du > last_close):
+            last_close = du
+    if last_close is None:
+        return False, f"no parseable window close in {history}"
+    if last_close[0] < MIN_CLOSED_YEAR:
+        return False, f"pre-{MIN_CLOSED_YEAR} closure ({last_close[0]})"
     if rec.get("purchased") is None:
         if rec.get("unpaired_purchased") is not None:
             return False, "unpaired count only (lower bound, not final)"
@@ -75,9 +84,11 @@ def anchor_eligible(rec):
     a = parse_until(rec.get("purchased_as_of") or "")
     if a is None:
         return False, f"unparseable purchased_as_of: {rec.get('purchased_as_of')}"
-    if a < d:
+    if a < last_close:
         return False, (f"stale count: observed {rec['purchased_as_of']} before "
-                       f"closure {rec['until']}; not the final count")
+                       f"last window close {last_close}; not the final count")
+    if any(str(n).startswith("multi_channel_sale") for n in rec.get("parse_notes") or []):
+        return False, "multi-channel sale: wiki count may cover one channel only"
     return True, "ok"
 
 
