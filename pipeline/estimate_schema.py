@@ -1,68 +1,117 @@
-"""Regenerate estimates/estimates_bracketed.jsonl under the canonical v2 schema.
+"""Canonical v2 estimate schema - THE one serializer for every entry point.
 
-Canonical schema (one shape for every row):
+Canonical schema (one shape for every row, batch and CLI identical):
 {
   "schema": 2,
   "item": str,            # title, human-readable
   "item_id": int,         # catalog id (numeric, always)
-  "snapshot_utc": str,    # when THIS estimate was computed
+  "entity_type": "asset"|"bundle",
+  "quantity": str,        # what the number measures (always present, estimate or not)
+  "snapshot_utc": str,    # pool walk finished_utc - NOT wall clock
+  "pool": str|null,       # pool artifact path/reference (validator-required)
   "status": "ESTIMATE" | "ABSTAIN",
   "confidence": "LOW"|"MEDIUM"|null,
   "bracket": [int, int]|null,
   "warnings": [str],
   "anchors": {...}|null,
-  "pool_manifest": path|null,
   "abstain_reason": str|null
 }
 
-Rejected from v1: favorites-derived point estimates (contradicts measured
-fav/purchase spread), free-text status, rows without snapshot dates, mixed
-schemas for the same item, 'UNCHANGED' carry-forward (failed revalidation
-abstains with STALE_RESULT instead of silently repeating an old number).
+Rejected from v1: favorites-derived point estimates, free-text status, rows
+without snapshot dates, mixed schemas, 'UNCHANGED' carry-forward.
+Method/currency disclosures are fixed constants, not per-run choices
+(Astra 2.8: divergent serializers silently drop semantics).
 """
-import json, os, sys
+import hashlib
+import json
+import os
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import bracket
 
-CANON = {
-    "schema": 2,
-    "item": None, "item_id": None, "snapshot_utc": None,
-    "status": None, "confidence": None, "bracket": None,
-    "warnings": [], "anchors": None, "pool_manifest": None,
-    "abstain_reason": None,
-}
+# Fixed method/currency disclosure (Astra 1.3/1.5): every row states WHAT the
+# number claims to measure and its calibration status. Neither is negotiable.
+QUANTITY = ("estimated lifetime purchases of the original item "
+            "(rank-neighbor heuristic; NOT distinct current owners, NOT copies)")
+CALIBRATION = "uncalibrated"
+METHOD = "rank_neighbor_heuristic"
 
 
-def row(item, item_id, result, snapshot_utc, pool_manifest=None):
+def _git_commit():
+    try:
+        import subprocess
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
+                              text=True, cwd=root).stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _anchors_digest():
+    p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     "anchors", "anchors_harden.jsonl")
+    try:
+        return hashlib.sha256(open(p, "rb").read()).hexdigest()
+    except OSError:
+        return "missing"
+
+
+CODE_COMMIT = _git_commit()
+PARSER_VERSION = "2.1"  # strict same-sentence date binding + typed identities
+ANCHORS_SHA256 = _anchors_digest()
+
+
+def row(item, item_id, result, snapshot_utc, pool=None,
+        entity_type="asset"):
     """snapshot_utc is REQUIRED and must come from the pool manifest
     (finished_utc of the walk that produced the pool). No wall-clock fallback:
-    identical inputs must produce identical bytes (Astra #7 regression fix)."""
-    if not snapshot_utc:
-        return {"schema": 2, "item": item, "item_id": int(item_id),
-                "status": "ABSTAIN",
-                "abstain_reason": "NO_SNAPSHOT_PROVENANCE: pool manifest has no finished_utc; "
-                                  "a bracket needs a timestamped walk (no wall-clock substitution)",
-                "warnings": [], "anchors": None, "pool_manifest": pool_manifest,
-                "confidence": None, "bracket": None}
-    r = dict(CANON)
-    r.update({
+    identical inputs must produce identical bytes (Astra #7 regression fix).
+    `pool` is the pool artifact reference; it is kept for BOTH statuses so a
+    copied JSON record still identifies its evidence (Astra 2.11 partial)."""
+    base = {
+        "schema": 2,
         "item": item,
         "item_id": int(item_id),
-        "snapshot_utc": snapshot_utc,
-        "status": result["status"],
-    })
+        "entity_type": entity_type,
+        "quantity": QUANTITY,
+        "calibration_status": CALIBRATION,
+        "method": METHOD,
+        "snapshot_utc": None,
+        "pool": pool,
+        "status": None,
+        "confidence": None,
+        "bracket": None,
+        "warnings": [],
+        "anchors": None,
+        "abstain_reason": None,
+        # reproducibility envelope (Astra 2.11): a copied record must pin its
+        # evidence. A timestamp alone is not a snapshot identifier.
+        "code_commit": CODE_COMMIT,
+        "parser_version": PARSER_VERSION,
+        "anchors_sha256": ANCHORS_SHA256,
+    }
+    if not snapshot_utc:
+        base["status"] = "ABSTAIN"
+        base["abstain_reason"] = ("NO_SNAPSHOT_PROVENANCE: pool manifest has no finished_utc; "
+                                  "a bracket needs a timestamped walk (no wall-clock substitution)")
+        return base
+    base["snapshot_utc"] = snapshot_utc
+    base["status"] = result["status"]
     if result["status"] == "ESTIMATE":
-        r["confidence"] = result.get("confidence")
-        r["bracket"] = result["bracket"]
-        r["warnings"] = result.get("warnings", [])
-        r["anchors"] = result.get("anchors")
-        r["pool_manifest"] = pool_manifest
+        base["confidence"] = result.get("confidence")
+        base["bracket"] = result["bracket"]
+        base["warnings"] = result.get("warnings", [])
+        base["anchors"] = result.get("anchors")
     else:
-        r["abstain_reason"] = result.get("reason", "UNSPECIFIED") + (
+        base["abstain_reason"] = result.get("reason", "UNSPECIFIED") + (
             ": " + result.get("detail", "") if result.get("detail") else "")
-    return r
+    return base
+
+
+def dumps(row_obj, indent=None):
+    """One serialization path. CLI and batch both call this."""
+    return json.dumps(row_obj, indent=indent)
 
 
 if __name__ == "__main__":
-    print("regenerate via estimate_cli.py after anchors re-scrape completes")
+    print("import me; estimate.py and estimate_cli.py share this serializer")

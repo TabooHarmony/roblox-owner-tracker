@@ -46,21 +46,34 @@ def fetch(params):
     raise RuntimeError(f"fetch failed after retries: {last}")
 
 
+MAX_PAGES = 40  # 120/page * 40 >> the ~1000-item serving cap; runaway guard
+
+
 def walk(query, keyword_for_log):
+    """Walk one pool. Returns (blob, ok, reason). complete=True ONLY on a walk
+    that exhausted the cursor chain with every page populated (Astra 2.4):
+    an empty page WITH a continuation cursor is drift/malformation, not
+    exhaustion; repeating cursors are a cycle -> bounded failure."""
     params = dict(query)
     params.setdefault("Limit", 120)  # API caps ~110-120 regardless; walk via cursor
     pages, ids, seen = [], [], set()
-    cursor = ""
+    cursor = ""  # the cursor ACTUALLY used for the next request
     started = now_utc()
+    ok, reason = False, "unreachable"
     while True:
+        if len(pages) >= MAX_PAGES:
+            reason = f"page budget exceeded ({MAX_PAGES}); cursor chain never ended"
+            break
         p = dict(params)
         if cursor:
             p["Cursor"] = cursor
         status, raw = fetch(p)
         j = json.loads(raw)
         body = j.get("data") or []
+        next_cursor = j.get("nextPageCursor") or ""
         pages.append({
-            "cursor": cursor,
+            "cursor": cursor,      # request cursor ("" = first page)
+            "next_cursor": next_cursor,
             "fetched_utc": now_utc(),
             "count": len(body),
             "raw_response_sha256": hashlib.sha256(raw).hexdigest(),
@@ -70,32 +83,46 @@ def walk(query, keyword_for_log):
             if i is not None:
                 ids.append(str(i))
                 seen.add(str(i))
-        cursor = j.get("nextPageCursor") or ""
-        if not cursor or not body:
+        if not next_cursor:
+            ok, reason = True, "cursor exhausted"  # valid termination
             break
+        if not body:
+            # empty page WITH continuation: malformed/aborted serving, not exhaustion
+            ok, reason = False, f"empty page {len(pages)} with continuation cursor; walk incomplete"
+            break
+        if next_cursor in {pg["cursor"] for pg in pages} or \
+                next_cursor in {pg["next_cursor"] for pg in pages[:-1]}:
+            ok, reason = False, f"cursor cycle detected at page {len(pages)}"
+            break
+        cursor = next_cursor
         time.sleep(PAGE_DELAY_S)
     finished = now_utc()
-    return {
-        "manifest": pool_manifest.make_manifest(
-            params, pages, started, finished, True, ids,
-            notes=[f"keyword={keyword_for_log}"]),
-        "item_ids": ids,
-    }
+    manifest = pool_manifest.make_manifest(
+        params, pages, started, finished, ok, ids,
+        notes=[f"keyword={keyword_for_log}"] + ([] if ok else [f"incomplete:{reason}"]))
+    return {"manifest": manifest, "item_ids": ids}, ok, reason
 
 
 def main():
     targets = json.load(open(sys.argv[1]))
+    failed = False
     for t in targets:
         out = t["out"]
         print(f"walking {t['name']} -> {out}", flush=True)
-        blob = walk(t["query"], t.get("name", ""))
+        blob, ok, reason = walk(t["query"], t.get("name", ""))
         errs = pool_manifest.validate(blob["manifest"])
-        if errs:
-            # never write a pool that would fail its own gate
-            raise SystemExit(f"{out}: walk produced invalid manifest: {errs}")
-        with open(out, "w") as f:
+        if not ok or errs:
+            # never publish a pool that is not a proven, complete walk
+            print(f"  FAIL: {reason or errs}", flush=True)
+            failed = True
+            continue  # keep walking other targets; exit nonzero at the end
+        tmp = out + ".tmp"
+        with open(tmp, "w") as f:
             json.dump(blob, f)
+        os.replace(tmp, out)
         print(f"  n={len(blob['item_ids'])} pages={len(blob['manifest']['pages'])} ok", flush=True)
+    if failed:
+        raise SystemExit("one or more walks failed validation; pools NOT updated")
 
 
 if __name__ == "__main__":

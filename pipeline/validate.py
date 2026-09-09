@@ -1,6 +1,12 @@
 """Schema validation for anchors and estimates. Exit 1 on any violation.
 No network, no LLM: pure structural checks over the shipped JSONL files.
+
+Strictness policy (Astra 2.7): type errors are structured failures, never
+truthiness-guarded; booleans are NOT integers; schema version, enums, calendar
+timestamps, bracket shape, and anchor/endpoint relational consistency are all
+enforced. Empty/truncated datasets fail (completeness rule, Astra 2.9).
 """
+import datetime
 import json
 import os
 import re
@@ -16,13 +22,32 @@ ANCHOR_REQUIRED = {
 }
 ANCHOR_STATES = {"still_available", "closed", "unknown"}
 DATE_RE = re.compile(r"^[A-Z][a-z]+ \d{1,2}, \d{4}$|^\d{1,2} [A-Z][a-z]+ \d{4}$", re.I)
+SCHEMA_VERSIONS = {2}
 ESTIMATE_REQUIRED = {
     "schema": int, "item": str, "item_id": int, "snapshot_utc": str,
-    "pool": str, "status": str,
+    "pool": str, "status": str, "quantity": str,
 }
 ESTIMATE_STATUS = {"ESTIMATE", "ABSTAIN"}
-SNAPSHOT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
-# sale_state != still_available requires a parseable until (the closure-date rule)
+CONFIDENCE_ENUM = {"LOW", "MEDIUM"}
+# real calendar dates only: 2026-99-99 must fail, not just the shape
+SNAPSHOT_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$")
+
+
+def _is_int(x):
+    """bool is an int subclass in Python; the schema says integer, so bool fails."""
+    return isinstance(x, int) and not isinstance(x, bool)
+
+
+def _real_timestamp(s):
+    m = SNAPSHOT_RE.match(s or "")
+    if not m:
+        return False
+    y, mo, d, h, mi, se = map(int, m.groups())
+    try:
+        datetime.datetime(y, mo, d, h, mi, se)
+    except ValueError:
+        return False
+    return True
 
 
 def validate_anchor(rec, errors):
@@ -32,6 +57,13 @@ def validate_anchor(rec, errors):
             errors.append(f"{where}: missing field {k}")
         elif not isinstance(rec[k], typ):
             errors.append(f"{where}: field {k} wrong type {type(rec[k]).__name__}")
+    # bool/negative counts (Astra 2.6c/2.7)
+    for k in ("purchased", "unpaired_purchased", "item_id", "rev_id"):
+        v = rec.get(k)
+        if v is not None and not _is_int(v):
+            errors.append(f"{where}: field {k} must be integer-or-null, got {v!r}")
+        elif _is_int(v) and v < 0 and k != "rev_id":
+            errors.append(f"{where}: field {k} negative: {v!r}")
     if rec.get("sale_state") not in ANCHOR_STATES:
         errors.append(f"{where}: bad sale_state {rec.get('sale_state')!r}")
     until = rec.get("until")
@@ -69,8 +101,12 @@ def validate_estimate(rec, errors):
             errors.append(f"{where}: missing field {k}")
         elif not isinstance(rec[k], typ):
             errors.append(f"{where}: field {k} wrong type {type(rec[k]).__name__}")
-    if not SNAPSHOT_RE.match(rec.get("snapshot_utc") or ""):
-        errors.append(f"{where}: snapshot_utc not a UTC timestamp "
+    if rec.get("schema") not in SCHEMA_VERSIONS:
+        errors.append(f"{where}: unsupported schema {rec.get('schema')!r}")
+    if not _is_int(rec.get("item_id")) or rec.get("item_id", 0) < 0:
+        errors.append(f"{where}: item_id must be a nonnegative integer, got {rec.get('item_id')!r}")
+    if not _real_timestamp(rec.get("snapshot_utc")):
+        errors.append(f"{where}: snapshot_utc not a real UTC calendar timestamp "
                       f"({rec.get('snapshot_utc')!r}; wall-clock fabrication forbidden)")
     if rec.get("status") not in ESTIMATE_STATUS:
         errors.append(f"{where}: bad status {rec.get('status')!r}")
@@ -80,36 +116,80 @@ def validate_estimate(rec, errors):
         for k in ("confidence", "bracket", "anchors"):
             if k not in rec:
                 errors.append(f"{where}: ESTIMATE missing {k}")
+        if rec.get("confidence") not in CONFIDENCE_ENUM:
+            errors.append(f"{where}: bad confidence {rec.get('confidence')!r} "
+                          f"(allowed: {sorted(CONFIDENCE_ENUM)})")
         b = rec.get("bracket")
-        if b and (not isinstance(b, list) or len(b) != 2
-                  or not all(isinstance(x, int) for x in b) or b[0] > b[1]):
-            errors.append(f"{where}: bad bracket {b!r}")
+        if b is None:
+            errors.append(f"{where}: ESTIMATE with null bracket")
+        elif (not isinstance(b, list) or len(b) != 2
+              or not all(_is_int(x) for x in b)):
+            errors.append(f"{where}: bad bracket {b!r} (two nonnegative integers required)")
+        elif any(x < 0 for x in b):
+            errors.append(f"{where}: negative bracket endpoint {b!r}")
+        elif b[0] > b[1]:
+            errors.append(f"{where}: inverted bracket {b!r} (engine must abstain, not emit)")
         a = rec.get("anchors") or {}
-        for side in ("above", "below"):
-            sa = a.get(side) or {}
-            if sa.get("purchased") is None:
-                errors.append(f"{where}: {side} anchor has no paired count")
+        if not isinstance(a, dict) or not a:
+            errors.append(f"{where}: ESTIMATE anchors missing/empty")
+        else:
+            pa = pb = None
+            for side in ("above", "below"):
+                sa = a.get(side)
+                if not isinstance(sa, dict):
+                    errors.append(f"{where}: {side} anchor missing")
+                    continue
+                p = sa.get("purchased")
+                if not _is_int(p) or p < 0:
+                    errors.append(f"{where}: {side} anchor count invalid: {p!r}")
+                if side == "above":
+                    pa = p
+                else:
+                    pb = p
+            # relational consistency: bracket must lie between the anchor counts
+            b_ok = (isinstance(b, list) and len(b) == 2
+                    and all(_is_int(x) for x in b)
+                    and _is_int(pa) and _is_int(pb))
+            if b_ok:
+                lo, hi = b
+                if not (min(pa, pb) <= lo and hi <= max(pa, pb)):
+                    errors.append(f"{where}: bracket {[lo, hi]} inconsistent with anchor "
+                                  f"counts {[pa, pb]}")
+    if rec.get("status") == "ABSTAIN":
+        # an abstention must not smuggle an interval
+        if rec.get("bracket") is not None or rec.get("confidence") is not None:
+            errors.append(f"{where}: ABSTAIN carrying bracket/confidence")
+
+
+def _validate_file(path, fn, errors, min_rows=1):
+    if not os.path.exists(path):
+        errors.append(f"missing {path}")
+        return 0
+    n = 0
+    for i, l in enumerate(open(path), 1):
+        l = l.strip()
+        if not l:
+            errors.append(f"{path}:{i}: blank line (truncated write?)")
+            continue
+        try:
+            rec = json.loads(l)
+        except json.JSONDecodeError as e:
+            errors.append(f"{path}:{i}: malformed JSON: {e}")
+            continue
+        fn(rec, errors)
+        n += 1
+    if n < min_rows:
+        errors.append(f"{path}: {n} rows (completeness rule: an empty/partial dataset "
+                      "must fail validation, never publish)")
+    return n
 
 
 def main():
     errors = []
-    n_anchors = n_est = 0
-    p = os.path.join(ROOT, "anchors", "anchors_harden.jsonl")
-    if os.path.exists(p):
-        for i, l in enumerate(open(p)):
-            rec = json.loads(l)
-            validate_anchor(rec, errors)
-            n_anchors += 1
-    else:
-        errors.append(f"missing {p}")
-    p = os.path.join(ROOT, "estimates", "estimates_v2.jsonl")
-    if os.path.exists(p):
-        for l in open(p):
-            rec = json.loads(l)
-            validate_estimate(rec, errors)
-            n_est += 1
-    else:
-        errors.append(f"missing {p}")
+    n_anchors = _validate_file(
+        os.path.join(ROOT, "anchors", "anchors_harden.jsonl"), validate_anchor, errors)
+    n_est = _validate_file(
+        os.path.join(ROOT, "estimates", "estimates_v2.jsonl"), validate_estimate, errors)
     for e in errors[:20]:
         print("ERROR:", e)
     print(f"validated: {n_anchors} anchors, {n_est} estimates, {len(errors)} errors")

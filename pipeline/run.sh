@@ -31,7 +31,14 @@ case "$cmd" in
     "$0" pools
     "$0" estimate
     ;;
-  help|*)
+  help)
     echo "usage: pipeline/run.sh {tests|validate|harvest|pools|estimate|all}"
+    ;;
+  *)
+    # unknown commands FAIL (Astra 4.4): a misspelled scheduled command must
+    # never masquerade as a successful no-op.
+    echo "error: unknown command '$cmd'" >&2
+    echo "usage: pipeline/run.sh {tests|validate|harvest|pools|estimate|all}" >&2
+    exit 2
     ;;
 esac

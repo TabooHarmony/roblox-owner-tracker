@@ -16,17 +16,18 @@ Fixes from external adversarial review (2026-09-09):
 import re
 
 DATE = r"[A-Z][a-z]+ \d{1,2}, \d{4}"
+# Scoped identity: search infobox parameter lines ONLY (line starts with | inside the
+# infobox span), so literal examples in <nowiki> or prose cannot shadow the real id.
+RE_INFOBOX = re.compile(r"\{\{\s*[Ii]nfobox[^}]*\}\}", re.S)
 RE_ID = re.compile(r"^\s*\|\s*(?:catalog\s+)?id\s*=\s*(\d+)", re.M | re.I)
 RE_BUNDLE_ID = re.compile(r"^\s*\|\s*bundle\s+id\s*=\s*(\d+)", re.M | re.I)
-# Primary: same-sentence pairing ("As of X, it has been purchased N times")
-RE_PAIR_PUR = re.compile(r"As of (" + DATE + r")[^.]*?(?:been|was) purchased ([\d,]+) times", re.I)
-# times? was a backtracking bug: optional s let [^.]*? eat the s and match ACROSS the
-# sentence-ending period. Wiki always writes "times". Anchored, no period crossing:
-RE_PAIR_PUR2 = re.compile(r"(?:been|was) purchased ([\d,]+) times[^.\n]*?As of (" + DATE + r")", re.I)
-# Wiki convention: count sentence followed IMMEDIATELY by an As-of sentence
-# ("Before going off-sale, it was purchased N times. As of X, ...").
-# The gap between count and date may not cross a second count mention.
-RE_PAIR_PUR3 = re.compile(r"(?:been|was) purchased ([\d,]+) times\.\s*As of (" + DATE + r")", re.I)
+# STRICT same-sentence date binding (Astra 2.1a): a purchase count pairs with an
+# As-of date ONLY when both live in the same sentence (no period between). The old
+# cross-sentence fallbacks bound counts to favorites/removal dates in the NEXT
+# sentence - fabricated provenance. Either order inside one sentence is fine.
+RE_PAIR_PUR = re.compile(
+    r"(?:As of (" + DATE + r")[,.]?\s*(?:it\s+)?(?:has\s+|had\s+)?(?:been|was) purchased ([\d,]+) times"
+    r"|(?:been|was) purchased ([\d,]+) times[^.\n]*?\b[Aa]s of (" + DATE + r"))", re.I)
 RE_UNPAIRED_PUR = re.compile(r"(?:been|was) purchased ([\d,]+) times", re.I)
 RE_PAIR_FAV = re.compile(r"As of (" + DATE + r")[^.]*?(?:been |was )?favorited ([\d,]+) times", re.I)
 RE_PAIR_FAV2 = re.compile(r"(?:been |was )?favorited ([\d,]+) times[^.\n]*?As of (" + DATE + r")", re.I)
@@ -45,11 +46,18 @@ def parse(wt):
     notes = []
     if "<!--" in raw:
         notes.append("comments_stripped")
-    m = RE_ID.search(wt)
+    # identity must come from inside the infobox span; a literal <nowiki>| id = 999</nowiki
+    # example in the page body must never shadow the real parameter (Astra 2.1c).
+    box = RE_INFOBOX.search(wt)
+    scope = box.group(0) if box else wt
+    m = RE_ID.search(scope)
     if not m:
-        m = RE_BUNDLE_ID.search(wt)
+        m = RE_BUNDLE_ID.search(scope)
         if m:
             notes.append("id_from_bundle_id")
+            notes.append("entity_type:bundle")
+        else:
+            notes.append("no_infobox_span_found") if not box else None
     untils = [u.strip() for u in RE_UNTIL.findall(wt)]
     still = any(RE_STILL.search(u) for u in untils)
     real_dates = [u for u in untils if RE_DATE_ONLY.match(u)]
@@ -71,21 +79,26 @@ def parse(wt):
         "parse_notes": notes,
     }
 
+    # Fail closed on unresolved date templates (Astra 2.1c): a {{Date|...}}
+    # the parser cannot resolve means the page carries availability/count info
+    # we did NOT consume. The record stays parseable but parse_ok=False so the
+    # engine and merger refuse it rather than trusting a clean-looking subset.
+    unresolved = re.findall(r"\{\{\s*Date\s*\|[^}]*\}\}", wt)
+    if unresolved:
+        rec["parse_ok"] = False
+        rec["parse_notes"].append("unresolved_date_template:" + ";".join(unresolved[:3]))
+
     p = RE_PAIR_PUR.search(wt)
     if p:
-        rec["purchased_as_of"], rec["purchased"] = p.group(1), int(p.group(2).replace(",", ""))
-    else:
-        p2 = RE_PAIR_PUR2.search(wt)
-        p3 = None if p2 else RE_PAIR_PUR3.search(wt)
-        if p2:
-            rec["purchased"], rec["purchased_as_of"] = int(p2.group(1).replace(",", "")), p2.group(2)
-        elif p3:
-            rec["purchased"], rec["purchased_as_of"] = int(p3.group(1).replace(",", "")), p3.group(2)
+        if p.group(1):
+            rec["purchased_as_of"], rec["purchased"] = p.group(1), int(p.group(2).replace(",", ""))
         else:
-            up = RE_UNPAIRED_PUR.search(wt)
-            if up:
-                rec["unpaired_purchased"] = int(up.group(1).replace(",", ""))
-                notes.append("purchased_unpaired_no_asof")
+            rec["purchased"], rec["purchased_as_of"] = int(p.group(3).replace(",", "")), p.group(4)
+    else:
+        up = RE_UNPAIRED_PUR.search(wt)
+        if up:
+            rec["unpaired_purchased"] = int(up.group(1).replace(",", ""))
+            notes.append("purchased_unpaired_no_asof: strict binding found no same-sentence date")
 
     f = RE_PAIR_FAV.search(wt)
     if f:

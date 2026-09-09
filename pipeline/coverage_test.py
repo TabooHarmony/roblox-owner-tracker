@@ -5,11 +5,20 @@ within a rank radius R, bracket the target from outside R only, and check
 whether the true purchase count falls in the bracket. Offline: uses only the
 shipped anchors + pool manifests.
 
-Reporting rules (Astra re-audit finding: silent skips + inconsistent table):
-- every skipped target is counted and reported (skipped_no_nearby);
-- coverage is reported over the number of attempts (n + abstain), never over
-  estimates only - an abstain is not a covered outcome;
+Metric naming (Astra 3.1, precise): with E = eligible pool-occurrences,
+A = attempts (E - skipped), N = emitted estimates, C = containing estimates,
+this script reports C/A — containment over attempts. It does NOT report
+conditional coverage C/N or selection rate A/E; the docs must name the
+metric as C/A.
+
+Reporting rules:
+- every skipped target is counted and reported (skipped_no_nearby) and the
+  selection rate A/E is printed so severe cohort selection is visible;
+- coverage is reported over attempts (N + abstain), never over estimates
+  only - an abstain is not a covered outcome;
 - the aggregate row sums pools, it does not average percentages.
+NOTE: labels come from the same anchor database (Astra 3.3) - this measures
+internal consistency, not unit/identity correctness.
 """
 import json
 import os
@@ -66,7 +75,8 @@ def main():
             a[0] += attempts
             a[1] += cov
             med = sorted(widths)[len(widths) // 2] if widths else 0
-            print(f"  R={R}: attempts={attempts} (skipped_no_nearby={skipped}) "
+            print(f"  R={R}: attempts={attempts}/{len(el_idx)} (selection {attempts / len(el_idx):.0%}, "
+                  f"skipped_no_nearby={skipped}) "
                   f"abstain={abst} covered={cov}/{attempts}"
                   f"={cov / attempts if attempts else 0:.0%} median_width={med:.2f}x")
     print("aggregate (pools summed, no percentage averaging):")

@@ -1,1 +1,18 @@
-MPL-2.0 is the license for code. Wiki-sourced data files (anchors/) are CC-BY-SA 4.0, attributed to roblox.fandom.com contributors.
+License notice
+==============
+
+Code (all .py, .sh, Makefile, workflow files): MPL-2.0.
+Full text: https://www.mozilla.org/en-US/MPL/2.0/ (also in LICENSE).
+
+Wiki-derived data (anchors/, and any extracted fields inside pools/):
+CC-BY-SA 4.0, attributed to the contributors of roblox.fandom.com
+(source: https://roblox.fandom.com/).
+License text: https://creativecommons.org/licenses/by-sa/4.0/legalcode
+License URI:  https://creativecommons.org/licenses/by-sa/4.0/
+
+Data files carry per-record source revision IDs (rev_id, rev_timestamp) from
+the wiki API; those revision URLs are the attribution trail for each record.
+
+If you share a modified version of the data, CC-BY-SA 4.0 requires that you
+credit roblox.fandom.com contributors, link the license, and indicate changes.
+The licenses apply separately: code under MPL-2.0, data under CC-BY-SA 4.0.

@@ -1,10 +1,54 @@
 [
-  {"name": "crown", "out": "pools/crown_pool_nfl_wrapped.json",
-   "query": {"Keyword": "crown red orange yellow green blue pink white", "creatorName": "Roblox", "creatorType": "User", "salesTypeFilter": 1, "SortType": 2, "IncludeNotForSale": true}},
-  {"name": "party", "out": "pools/party_pool_nfl_wrapped.json",
-   "query": {"Keyword": "party hat red orange yellow green blue pink white", "creatorName": "Roblox", "creatorType": "User", "salesTypeFilter": 1, "SortType": 2, "IncludeNotForSale": true}},
-  {"name": "stormbreak", "out": "pools/stormbreak_pool_nfl_wrapped.json",
-   "query": {"Keyword": "horns red orange yellow green blue pink white", "creatorName": "Roblox", "creatorType": "User", "salesTypeFilter": 1, "SortType": 2, "IncludeNotForSale": true}},
-  {"name": "confetti", "out": "pools/confetti_pool_wrapped.json",
-   "query": {"Keyword": "confetti cannon red orange yellow green blue pink white", "creatorName": "Roblox", "creatorType": "User", "salesTypeFilter": 1, "SortType": 2, "IncludeNotForSale": true}}
+ {
+  "name": "crown",
+  "out": "pools/crown_pool_nfl_wrapped.json",
+  "query": {
+   "Keyword": "crown red orange yellow green blue pink white",
+   "creatorName": "Roblox",
+   "creatorType": "User",
+   "salesTypeFilter": 1,
+   "SortType": 2,
+   "IncludeNotForSale": true,
+   "SortAggregation": 5
+  }
+ },
+ {
+  "name": "party",
+  "out": "pools/party_pool_nfl_wrapped.json",
+  "query": {
+   "Keyword": "party hat red orange yellow green blue pink white",
+   "creatorName": "Roblox",
+   "creatorType": "User",
+   "salesTypeFilter": 1,
+   "SortType": 2,
+   "IncludeNotForSale": true,
+   "SortAggregation": 5
+  }
+ },
+ {
+  "name": "stormbreak",
+  "out": "pools/stormbreak_pool_nfl_wrapped.json",
+  "query": {
+   "Keyword": "horns red orange yellow green blue pink white",
+   "creatorName": "Roblox",
+   "creatorType": "User",
+   "salesTypeFilter": 1,
+   "SortType": 2,
+   "IncludeNotForSale": true,
+   "SortAggregation": 5
+  }
+ },
+ {
+  "name": "confetti",
+  "out": "pools/confetti_pool_wrapped.json",
+  "query": {
+   "Keyword": "confetti cannon red orange yellow green blue pink white",
+   "creatorName": "Roblox",
+   "creatorType": "User",
+   "salesTypeFilter": 1,
+   "SortType": 2,
+   "IncludeNotForSale": true,
+   "SortAggregation": 5
+  }
+ }
 ]

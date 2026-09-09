@@ -1,26 +1,63 @@
+# Refresh anchors + rewalk pools on a schedule, using the SAME maintained
+# pipeline as users (Astra 4.1): no retired scripts, merger runs, outputs
+# validated BEFORE publication, and the workflow fails loudly if validation
+# or the regenerate-and-compare gate fails.
 name: refresh-anchors
+
 on:
-  workflow_dispatch:
   schedule:
-    - cron: "17 6 * * 1"  # weekly, off the busy hour
+    - cron: "0 6 * * 1"  # weekly, Monday 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
 jobs:
-  rescrape:
+  refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
       - uses: actions/setup-python@v5
-        with: {python-version: "3.12"}
-      - name: Rescrape wiki anchors (hardened parser)
+        with:
+          python-version: "3.12"
+
+      - name: Harvest (fresh run identity; no resume of stale checkpoints)
         run: |
+          rm -f anchors_harden_rescrape.jsonl
           python3 pipeline/rescrape_all.py
-          python3 pipeline/backfill_rev.py
-      - name: Run fixture tests
-        run: python3 tests/test_pipeline.py
-      - name: Commit refreshed anchors
+
+      - name: Re-walk pools (v2 manifests, digests)
+        run: python3 pipeline/walk_pools.py pools/walk_targets.json
+
+      - name: Merge (provenance-checked, atomic)
+        run: python3 pipeline/merge_anchors.py anchors_harden_rescrape.jsonl anchors_delta_parsed.jsonl || python3 pipeline/merge_anchors.py anchors_harden_rescrape.jsonl
+
+      - name: Regenerate estimates (shared serializer)
+        run: python3 pipeline/estimate.py
+
+      - name: Validate BEFORE publication
+        run: python3 pipeline/validate.py
+
+      - name: Tests
+        run: make tests
+
+      - name: Regenerate-and-compare gate
         run: |
-          git config user.name "owner-tracker-bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add anchors/
-          git diff --cached --quiet || git commit -m "anchor refresh: $(date -u +%F)"
+          # byte-replay: a second run must produce identical published files
+          sha256sum anchors/anchors_harden.jsonl estimates/estimates_v2.jsonl > /tmp/before.sha
+          python3 pipeline/estimate.py
+          sha256sum -c /tmp/before.sha
+
+      - name: Commit and push (atomic publication)
+        run: |
+          git config user.name "hermes-bot"
+          git config user.email "hermes-bot@users.noreply.github.com"
+          git add anchors/ estimates/ pools/
+          if git diff --cached --quiet; then
+            echo "no changes"; exit 0
+          fi
+          git commit -m "refresh: scheduled anchor/pool/estimate update (validated)"
           git push

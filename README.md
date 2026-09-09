@@ -1,8 +1,14 @@
 # roblox-owner-tracker
 
-Deterministic owner-count bracketing for limited Roblox catalog items, using
+Deterministic purchase-count bracketing for limited Roblox catalog items, using
 wiki-documented purchase counts of neighboring items as anchors. No LLM in the
 loop: every step is a plain script with pinned inputs.
+
+Despite the repo name, the measured quantity is **estimated lifetime purchases
+of the original item** — not copies, not distinct current owners (Roblox
+documents resale and multi-copy ownership; those are different quantities).
+Every estimate row carries this statement in its `quantity` field, plus
+`method: rank_neighbor_heuristic` and `calibration_status: uncalibrated`.
 
 Method origin: the bestseller/rainbow-anchor approach was invented and documented
 by **Maggy (Maggy Rarefication)**. This repo is a deterministic reimplementation
@@ -19,8 +25,9 @@ heuristics, not confidence bounds. Known limits (measured, see
 - Anchor agreement does **not** prove the target lies between them. Two anchors
   can agree while the target sits far outside their interval; nothing in the
   method detects this.
-- No held-out coverage study exists yet. Until one does, every interval here is
-  a lead for manual investigation, not a measurement.
+- The held-out coverage study (C/A ≈ 88-95%) measures internal consistency of
+  the shipped dataset, not agreement with platform ground truth.
+- Width is width, not confidence: a narrow interval can be precisely wrong.
 
 The engine therefore **abstains** instead of guessing: a target not in the pool
 snapshot, with no eligible anchors, or with conflicting pools produces an

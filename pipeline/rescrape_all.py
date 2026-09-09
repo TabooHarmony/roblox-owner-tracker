@@ -1,6 +1,12 @@
 """Re-scrape all wiki anchor titles with the hardened parser (parse_wiki.py).
 Writes anchors_harden_rescrape.jsonl with revision IDs pinned per record.
-Resume-safe: skips titles already present in the output file.
+
+Run semantics (Astra 2.10): a run RESUMES only within the same run identity.
+`--resume` continues an interrupted run (checkpoint = existing output tail,
+repaired: a truncated final line is dropped before appending). WITHOUT
+--resume, a fresh harvest starts a NEW run: existing output is moved aside
+(<OUT>.prev) so seen titles are always re-fetched and refreshed - resume is
+never silently treated as refresh.
 """
 import json, sys, time, os
 import urllib.request, urllib.parse
@@ -32,18 +38,41 @@ def api(params, tries=3):
 
 
 def done_titles():
+    """Checkpoint = titles in complete (non-truncated) lines only. A truncated
+    final line is dropped from consideration AND repaired on disk by the caller
+    (Astra 2.10): it must not linger to corrupt the next append."""
     seen = set()
-    if os.path.exists(OUT):
-        with open(OUT) as f:
-            for line in f:
-                try:
-                    seen.add(json.loads(line)["title"])
-                except Exception:
-                    pass
+    if not os.path.exists(OUT):
+        return seen
+    with open(OUT) as f:
+        lines = f.readlines()
+    complete, tail = [], []
+    for line in lines:
+        try:
+            json.loads(line)
+            complete.append(line)
+        except Exception:
+            tail = [line]  # assume truncated tail; earlier lines already complete
+    if tail and lines and tail[0] == lines[-1]:
+        # repair: rewrite without the truncated final line
+        with open(OUT, "w") as f:
+            f.writelines(complete)
+        print(f"repaired truncated checkpoint tail: {tail[0][:60]!r}", flush=True)
+    for line in complete:
+        try:
+            seen.add(json.loads(line)["title"])
+        except Exception:
+            pass
     return seen
 
 
 def main():
+    if "--resume" not in sys.argv:
+        # NEW RUN: never treat a stale checkpoint as refresh-complete (Astra 2.10)
+        if os.path.exists(OUT):
+            prev = OUT + ".prev"
+            os.replace(OUT, prev)
+            print(f"new run: checkpoint moved to {prev} (use --resume to continue it)", flush=True)
     # Title sources are always repo-internal; only OUT honors HARVEST_OUT_DIR.
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     titles = []

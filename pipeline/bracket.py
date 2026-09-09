@@ -26,13 +26,21 @@ DATE_MONTHS.update({m.lower()[:3]: i+1 for i, m in enumerate(MONTHS_FULL)})
 def parse_until(s):
     """'February 26, 2018', '14 mar 2016', 'NOVEMBER 24, 2023' -> (y, m, d) or None.
     Month matching is case-insensitive and accepts 3-letter abbreviations
-    (293 real anchors were rejected for format before this fix)."""
+    (293 real anchors were rejected for format before this fix).
+    Impossible calendar dates (February 30, etc.) return None (Astra 2.6c)."""
+    import datetime as _dt
+    def _ok(y, mth, d):
+        try:
+            _dt.date(y, mth, d)
+            return (y, mth, d)
+        except ValueError:
+            return None
     m = re.match(r"([A-Za-z]+) (\d{1,2}), (\d{4})", s.strip())
     if m and m.group(1).lower() in DATE_MONTHS:
-        return (int(m.group(3)), DATE_MONTHS[m.group(1).lower()], int(m.group(2)))
+        return _ok(int(m.group(3)), DATE_MONTHS[m.group(1).lower()], int(m.group(2)))
     m = re.match(r"(\d{1,2}) ([A-Za-z]+) (\d{4})", s.strip())
     if m and m.group(2).lower() in DATE_MONTHS:
-        return (int(m.group(3)), DATE_MONTHS[m.group(2).lower()], int(m.group(1)))
+        return _ok(int(m.group(3)), DATE_MONTHS[m.group(2).lower()], int(m.group(1)))
     return None
 
 
@@ -59,6 +67,11 @@ def anchor_eligible(rec):
         if rec.get("unpaired_purchased") is not None:
             return False, "unpaired count only (lower bound, not final)"
         return False, "no purchase count"
+    # structural sanity (Astra 2.6c): bool is an int subclass in python - reject
+    # explicitly; counts must be positive integers; dates must be real.
+    pc = rec["purchased"]
+    if isinstance(pc, bool) or not isinstance(pc, int) or pc < 0:
+        return False, f"malformed purchase count: {pc!r}"
     a = parse_until(rec.get("purchased_as_of") or "")
     if a is None:
         return False, f"unparseable purchased_as_of: {rec.get('purchased_as_of')}"
@@ -80,6 +93,15 @@ def rank_bracket(pool, target_id, anchors_db):
     if target_id not in pool:
         return {"status": "ABSTAIN", "reason": "TARGET_NOT_IN_POOL",
                 "detail": "target absent from this pool snapshot; re-walk required"}
+    # Self-bracket guard (Astra 2.5): duplicate ids mean 'position' is ambiguous and
+    # the same anchor can be found on both sides. Duplicate occurrences are server
+    # drift evidence - abstain, do not pick an arbitrary occurrence.
+    if len(pool) != len(set(pool)):
+        return {"status": "ABSTAIN", "reason": "DUPLICATE_POOL_IDS",
+                "detail": f"{len(pool) - len(set(pool))} duplicate id(s); ranking ambiguous"}
+    if pool.count(target_id) > 1:
+        return {"status": "ABSTAIN", "reason": "TARGET_DUPLICATED",
+                "detail": "target appears multiple times in pool"}
 
     # collect eligible anchors above and below the target rank
     ti = pool.index(target_id)
@@ -111,13 +133,18 @@ def rank_bracket(pool, target_id, anchors_db):
         return {"status": "ABSTAIN", "reason": "ANCHOR_COUNT_MISSING",
                 "detail": "eligible anchor has no paired count (defense in depth)"}
     if hi < lo:
-        # monotonicity guard: approximate ordering means this CAN happen.
-        # widen: the interval is still [lo, hi] as numbers, but the ordering
-        # claim is broken -> widen to the next anchors would need more pool.
-        # Here: emit with explicit inversion warning.
-        result = {"status": "ESTIMATE", "confidence": "LOW",
-                  "warnings": warnings0 + ["ANCHOR_INVERSION: upper-rank anchor has fewer purchases than lower-rank anchor; ordering is approximate"]}
-    elif hi == 0 or lo / hi < (1.0 / MAX_SANE_WIDTH_RATIO):
+        # Inversion: the ordering claim is contradicted by the endpoints themselves.
+        # A backwords interval is structurally misleading (Astra 2.6a) - sorting the
+        # endpoints would hide the contradiction. Abstain instead.
+        return {"status": "ABSTAIN", "reason": "ANCHOR_INVERSION",
+                "detail": f"upper-rank anchor purchased={hi} < lower-rank anchor purchased={lo}; "
+                          "ranking signal contradicted by anchor data"}
+    if hi == lo:
+        # Singleton interval: exact-looking output implies exact knowledge. An
+        # uncalibrated heuristic must not emit that shape by default (Astra 2.6b).
+        return {"status": "ABSTAIN", "reason": "SINGLETON_INTERVAL",
+                "detail": "both anchors report identical counts; interval would imply exact knowledge"}
+    if lo / hi < (1.0 / MAX_SANE_WIDTH_RATIO):
         result = {"status": "ESTIMATE", "confidence": "LOW",
                   "warnings": warnings0 + [f"wide bracket ({hi/max(lo,1):.1f}x)"]}
     else:
@@ -140,17 +167,17 @@ def rank_bracket(pool, target_id, anchors_db):
 
 
 def merge_pools(pool_results, target_id):
-    """Multiple pool snapshots for the same target: intersect if they overlap,
-    ABSTAIN on conflict. Never pick the narrower one (Astra #1)."""
-    ests = [r for r in pool_results if r["status"] == "ESTIMATE"]
-    if not ests:
-        return {"status": "ABSTAIN", "reason": "NO_POOL_PRODUCED_ESTIMATE"}
-    lo = max(r["bracket"][0] for r in ests)
-    hi = min(r["bracket"][1] for r in ests)
-    if lo > hi:
-        return {"status": "ABSTAIN", "reason": "CONFLICTING_POOLS",
-                "detail": f"pools disagree: {[r['bracket'] for r in ests]} - intersection empty"}
-    out = dict(ests[0])
-    out["bracket"] = [lo, hi]
-    out["pools_merged"] = len(ests)
-    return out
+    """DEPRECATED helper - DO NOT USE for published estimates.
+
+    Two independent reasons (Astra 2.6d + 3.5):
+    1. Metadata bug: the result carried the FIRST pool's target_id/confidence
+       regardless of the target argument - wrong-entity metadata.
+    2. Statistical invalidity: intersecting heuristic intervals does not create
+       confidence. Shared-anchor pools are correlated; even ten independent 95%
+       intervals intersect-contain only ~60% of the time. Without a separately
+       validated combination rule, any merge output is uninterpretable.
+
+    Kept only so old callers fail loudly rather than silently mislead."""
+    raise NotImplementedError(
+        "merge_pools is retired: interval intersection has no calibrated meaning "
+        "(Astra 3.5). Bracket per pool and publish pool-local results.")
