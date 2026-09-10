@@ -141,6 +141,8 @@ def main():
         ledger.append(entry)
 
     summary = {
+        "comparison_class": "external-reference development comparison (policy-influencing); NOT an untouched validation set (Astra round-3 finding 4.3)",
+        "policy_note": "guard/detector changes were designed FROM this reference; a fresh post-freeze evaluation is still required before treating agreement rates as validation",
         "anchors_file": os.path.abspath(anchors_path),
         "anchors_sha256": sha256_file(anchors_path),
         "dump_file": os.path.abspath(dump_path),

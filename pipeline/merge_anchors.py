@@ -79,11 +79,24 @@ def main():
         print(f"delta replaced: {replaced}")
 
     tmp = OUT + ".tmp"
-    with open(tmp, "w") as f:
+    n_ok = n_refused = 0
+    refused_path = os.path.join(os.path.dirname(OUT), "anchors_refused.jsonl")
+    tmp_refused = refused_path + ".tmp"
+    with open(tmp, "w") as f, open(tmp_refused, "w") as g:
         for t in sorted(base):
-            f.write(json.dumps(base[t]) + "\n")
-    os.replace(tmp, OUT)  # atomic publication
-    print(f"merged: {len(base)} anchors -> {OUT}")
+            r = base[t]
+            # Parse-quality gate AT THE MERGE BOUNDARY (Astra round-3 finding 1):
+            # failed parses are never shipped as anchors; they are archived with
+            # full notes so the refusal itself is auditable.
+            if r.get("parse_ok") is True:
+                f.write(json.dumps(r) + "\n")
+                n_ok += 1
+            else:
+                g.write(json.dumps(r) + "\n")
+                n_refused += 1
+    os.replace(tmp, OUT)        # atomic publication
+    os.replace(tmp_refused, refused_path)
+    print(f"merged: {n_ok} anchors -> {OUT}; refused (archived): {n_refused} -> {refused_path}")
 
 
 if __name__ == "__main__":

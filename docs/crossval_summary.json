@@ -1,0 +1,21 @@
+{
+  "anchors_file": "/root/roblox-owner-estimator/repo/anchors/anchors_harden.jsonl",
+  "anchors_sha256": "21dd1d29a3d6df6d65dcf0ab19a688d5ec83e765319850b18963c5d8497dc036",
+  "comparison_class": "external-reference development comparison (policy-influencing); NOT an untouched validation set (Astra round-3 finding 4.3)",
+  "dump_file": "/root/roblox-owner-estimator/reference_dump_items.json",
+  "dump_sha256": "65b3d4699df0e52639a4b8ba47ad062f5389a10e77c1992b0e65c3fbe70d1815",
+  "dump_vintage_cutoff_env": null,
+  "flow": {
+    "agreements": 100,
+    "available_observations": 416,
+    "disagreements": 2,
+    "eligible_records": 102,
+    "parseable_records": 416,
+    "reference_rows": 2168,
+    "reference_unique_typed": 2168,
+    "temporally_comparable": 416,
+    "unresolved": 2066,
+    "wiki_matches": 542
+  },
+  "policy_note": "guard/detector changes were designed FROM this reference; a fresh post-freeze evaluation is still required before treating agreement rates as validation"
+}
