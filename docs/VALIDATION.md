@@ -116,6 +116,43 @@ Honest caveats:
   intervals does not create confidence (shared anchors are correlated).
   Results are published pool-local only.
 
+## External-reference comparison (development evidence, NOT validation)
+
+An independent reference dump (leaked-API export, 2,168 items) was compared
+against wiki anchors. Status per Astra round-3 review, which we adopt verbatim:
+
+- This is a **comparison-driven development exercise, not a validation set**.
+  Parser and eligibility fixes were designed using mismatches found in this
+  reference; the remaining agreement totals describe performance AFTER
+  adapting to the same data. They must not be read as an error-rate
+  guarantee on any population.
+- The reference is a **lookup-selected convenience sample** (items the
+  reference publisher happened to query during its API bug), further
+  conditioned on wiki overlap and eligibility. What kinds of records
+  disappear before the eligible denominator is formed matters; the full
+  flow ledger is published with each run
+  (`pipeline/crossval_ledger.py` — reference rows, wiki matches, available
+  observations, parseable, temporally comparable, eligible, agree/disagree/
+  unresolved, with a per-row disposition including human-adjudicated
+  zero cases).
+- Numeric agreement does not validate date attribution or finality: a
+  stable count compares exactly even when the parser misdates it. Row-level
+  adjudication covers identity, value, observation date, window history,
+  count scope, and eligibility decision.
+- Reference provenance: the dump is a 2024-11-17 import of an export whose
+  collection date is NOT established. The earlier "~2022-23 vintage" claim
+  was unsupported and is RETRACTED. Temporal comparability is now enforced
+  only via an explicit `DUMP_VINTAGE_CUTOFF` parameter, never an assumed
+  date. Until the vintage is documented with evidence, comparisons are
+  reported with `DUMP_VINTAGE_CUTOFF` unset and disagreement counts left
+  unresolved.
+- Disagreements attributed to "dump-side zeros" are author attributions
+  until each is adjudicated in the ledger (typed identity, both values,
+  observation dates, field semantics, disposition, remaining uncertainty).
+
+Reproduce: `python3 pipeline/crossval_ledger.py <anchors.jsonl> <dump.json>
+<ledger.jsonl> <summary.json>`; inputs are pinned by sha256 in the summary.
+
 ## Determinism
 
 Identical inputs produce byte-identical outputs: the engine is pure-Python
