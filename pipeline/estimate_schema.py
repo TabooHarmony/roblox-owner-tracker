@@ -5,12 +5,11 @@ Canonical schema (one shape for every row, batch and CLI identical):
   "schema": 2,
   "item": str,            # title, human-readable
   "item_id": int,         # catalog id (numeric, always)
-  "entity_type": "asset"|"bundle",
+  "entity_type": "asset",               # bundles out of scope for v0 (assets only)
   "quantity": str,        # what the number measures (always present, estimate or not)
   "snapshot_utc": str,    # pool walk finished_utc - NOT wall clock
   "pool": str|null,       # pool artifact path/reference (validator-required)
   "status": "ESTIMATE" | "ABSTAIN",
-  "confidence": "LOW"|"MEDIUM"|null,
   "bracket": [int, int]|null,
   "warnings": [str],
   "anchors": {...}|null,
@@ -80,8 +79,7 @@ CODE_COMMIT = _git_commit()
 PARSER_VERSION = "2.2"  # window model, assertion binding, channel-scope status
 
 
-def row(item, item_id, result, snapshot_utc, pool=None,
-        entity_type="asset", anchors_path=None):
+def row(item, item_id, result, snapshot_utc, pool=None, anchors_path=None):
     """snapshot_utc is REQUIRED and must come from the pool manifest
     (finished_utc of the walk that produced the pool). No wall-clock fallback:
     identical inputs must produce identical bytes (Astra #7 regression fix).
@@ -91,14 +89,13 @@ def row(item, item_id, result, snapshot_utc, pool=None,
         "schema": 2,
         "item": item,
         "item_id": int(item_id),
-        "entity_type": entity_type,
+        "entity_type": "asset",   # v0 scope: assets only (reviewer directive)
         "quantity": QUANTITY,
         "calibration_status": CALIBRATION,
         "method": METHOD,
         "snapshot_utc": None,
         "pool": pool,
         "status": None,
-        "confidence": None,
         "bracket": None,
         "warnings": [],
         "anchors": None,
@@ -117,7 +114,6 @@ def row(item, item_id, result, snapshot_utc, pool=None,
     base["snapshot_utc"] = snapshot_utc
     base["status"] = result["status"]
     if result["status"] == "ESTIMATE":
-        base["confidence"] = result.get("confidence")
         base["bracket"] = result["bracket"]
         base["warnings"] = result.get("warnings", [])
         base["anchors"] = result.get("anchors")

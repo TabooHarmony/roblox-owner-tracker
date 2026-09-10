@@ -1,6 +1,6 @@
 """Deterministic rank-bracket estimator.
 
-Emits typed results: ESTIMATE (with confidence), ABSTAIN (typed reason), or ERROR.
+Emits typed results: ESTIMATE (rank-neighbor bracket), ABSTAIN (typed reason), or ERROR.
 Never emits a point estimate. Favorites-derived extrapolation is explicitly rejected
 as a primary signal (measured fav/purchase ratio spread: 0.23-36.8).
 
@@ -14,7 +14,7 @@ from datetime import date
 # Era rule: wiki purchase counts for pre-2012 closures come from a tiny user
 # base and don't share a scale with modern sales. Reject as anchors.
 MIN_CLOSED_YEAR = 2012
-# Bracket width beyond which we flag low confidence (approximate ordering).
+# Bracket width beyond which we attach a wide-bracket warning (approximate ordering).
 MAX_SANE_WIDTH_RATIO = 4.0
 
 MONTHS_FULL = ["January","February","March","April","May","June","July",
@@ -81,9 +81,11 @@ def anchor_eligible(rec):
     # parse-quality gate at the eligibility boundary (was only structural before)
     if rec.get("parse_ok") is False:
         return False, f"parse not ok (False; notes: {rec.get('parse_notes', [])[:2]})"
-    # Round-4 finding 6: adjudicated-erroneous wiki values are refused at runtime
-    typed_key = ('bundle' if "entity_type:bundle" in (rec.get("parse_notes") or [])
-                 else 'asset') + f":{rec.get('item_id')}"
+    # Round-4 finding 6: adjudicated-erroneous wiki values are refused at runtime.
+    # v0 scope: assets only; eligibility is never computed for bundle records.
+    if "entity_type:bundle" in (rec.get("parse_notes") or []):
+        return False, "bundle_record (out of scope for the v0 asset-only release)"
+    typed_key = f"asset:{rec.get('item_id')}"
     if typed_key in _erroneous_typed_ids():
         return False, f"adjudicated_wiki_value_erroneous ({typed_key}: live economy " \
                       f"API reports Sales=0; see docs/zero_sales_adjudications.json)"
@@ -223,11 +225,12 @@ def rank_bracket(pool, target_id, anchors_db):
         # uncalibrated heuristic must not emit that shape by default (Astra 2.6b).
         return {"status": "ABSTAIN", "reason": "SINGLETON_INTERVAL",
                 "detail": "both anchors report identical counts; interval would imply exact knowledge"}
+    warnings = warnings0
     if lo / hi < (1.0 / MAX_SANE_WIDTH_RATIO):
-        result = {"status": "ESTIMATE", "confidence": "LOW",
-                  "warnings": warnings0 + [f"wide bracket ({hi/max(lo,1):.1f}x)"]}
-    else:
-        result = {"status": "ESTIMATE", "confidence": "MEDIUM", "warnings": warnings0}
+        warnings = warnings + [f"wide bracket ({hi/max(lo,1):.1f}x)"]
+    # No confidence field (reviewer scope cut): the output is a rank-neighbor
+    # comparison, not a calibrated interval. Width warnings carry the honesty.
+    result = {"status": "ESTIMATE", "warnings": warnings}
 
     result.update({
         "bracket": [lo, hi],

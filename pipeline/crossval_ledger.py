@@ -48,6 +48,9 @@ def typed(entity_type, item_id):
     return f"{entity_type}:{item_id}"
 
 
+STATS = {"bundle_skipped": 0}
+
+
 def load_dump(path):
     blob = json.load(open(path))
     rows = blob["item"] if isinstance(blob, dict) else blob
@@ -55,6 +58,9 @@ def load_dump(path):
     for r in rows:
         # dump types: 'Asset'/'Bundle' (capitalized) -> typed namespace
         etype = {"Asset": "asset", "Bundle": "bundle"}.get(r.get("type"), "asset")
+        if etype == "bundle":
+            STATS["bundle_skipped"] += 1  # v0 scope: assets only
+            continue
         out[typed(etype, r["id"])] = r
     return out
 

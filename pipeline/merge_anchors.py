@@ -100,8 +100,15 @@ def main():
     with open(tmp, "w") as f, open(tmp_refused, "w") as g:
         for t in sorted(base):
             r = base[t]
-            typed_key = ('bundle' if "entity_type:bundle" in (r.get("parse_notes") or [])
-                         else 'asset') + f":{r.get('item_id')}"
+            # v0 scope (reviewer directive): assets only. Bundle records are
+            # refused at the merge boundary, same as parse failures, so the
+            # shipped anchor store can never carry out-of-scope evidence.
+            if "entity_type:bundle" in (r.get("parse_notes") or []):
+                r = dict(r)
+                r["parse_ok"] = False
+                r["parse_notes"] = list(r.get("parse_notes") or []) + [
+                    "bundle_out_of_scope (v0 release supports assets only)"]
+            typed_key = f"asset:{r.get('item_id')}"
             if typed_key in erroneous:
                 r = dict(r)
                 r["parse_ok"] = False

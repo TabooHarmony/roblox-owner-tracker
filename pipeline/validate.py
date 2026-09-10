@@ -31,7 +31,6 @@ ESTIMATE_REQUIRED = {
     "code_commit": str, "parser_version": str, "anchors_sha256": str,
 }
 ESTIMATE_STATUS = {"ESTIMATE", "ABSTAIN"}
-CONFIDENCE_ENUM = {"LOW", "MEDIUM"}
 # real calendar dates only: 2026-99-99 must fail, not just the shape
 SNAPSHOT_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$")
 
@@ -121,12 +120,9 @@ def validate_estimate(rec, errors):
     if rec.get("status") == "ABSTAIN" and not rec.get("abstain_reason"):
         errors.append(f"{where}: ABSTAIN without reason")
     if rec.get("status") == "ESTIMATE":
-        for k in ("confidence", "bracket", "anchors"):
+        for k in ("bracket", "anchors"):
             if k not in rec:
                 errors.append(f"{where}: ESTIMATE missing {k}")
-        if rec.get("confidence") not in CONFIDENCE_ENUM:
-            errors.append(f"{where}: bad confidence {rec.get('confidence')!r} "
-                          f"(allowed: {sorted(CONFIDENCE_ENUM)})")
         b = rec.get("bracket")
         if b is None:
             errors.append(f"{where}: ESTIMATE with null bracket")
@@ -168,8 +164,12 @@ def validate_estimate(rec, errors):
                                   f"counts {[pa, pb]}")
     if rec.get("status") == "ABSTAIN":
         # an abstention must not smuggle an interval
-        if rec.get("bracket") is not None or rec.get("confidence") is not None:
-            errors.append(f"{where}: ABSTAIN carrying bracket/confidence")
+        if rec.get("bracket") is not None:
+            errors.append(f"{where}: ABSTAIN carrying bracket")
+    # v0 scope: assets only; the entity_type field is a fixed constant now
+    if rec.get("entity_type") != "asset":
+        errors.append(f"{where}: entity_type must be 'asset' "
+                      f"(v0 scope is assets only), got {rec.get('entity_type')!r}")
 
 
 def _validate_file(path, fn, errors, min_rows=1):

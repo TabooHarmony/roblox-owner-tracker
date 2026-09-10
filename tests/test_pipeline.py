@@ -140,7 +140,7 @@ class TestEngine(unittest.TestCase):
         r = self._run(BASELINE_ANCHORS)
         self.assertEqual(r["status"], "ESTIMATE")
         self.assertEqual(r["bracket"], [3000, 20000])
-        self.assertIn(r["confidence"], ("LOW", "MEDIUM"))
+        self.assertNotIn("confidence", r)  # v0 scope: no calibrated language
 
     def test_no_anchors_abstains(self):
         r = bracket.rank_bracket([1, 2], 2, {})
@@ -206,12 +206,12 @@ class TestEngine(unittest.TestCase):
         self.assertEqual(r["reason"], "NO_ELIGIBLE_ANCHOR_ABOVE")
         self.assertIn("unpaired", bracket.anchor_eligible(anchors["asset:1"])[1])
 
-    def test_wide_bracket_low_confidence(self):
+    def test_wide_bracket_warns(self):
         anchors = {"asset:1": anchor(1000000, as_of="June 13, 2019", until="June 12, 2019"),
                    "asset:3": anchor(1000)}
         r = self._run(anchors)
         self.assertEqual(r["status"], "ESTIMATE")
-        self.assertEqual(r["confidence"], "LOW")
+        self.assertTrue(any(w.startswith("wide bracket") for w in r["warnings"]))
 
     def test_same_day_observation_rejected(self):
         # Round-3 boundary policy: observation equal to closure date cannot be
@@ -364,7 +364,7 @@ class TestValidatorStrictness(unittest.TestCase):
     def _est(self, **over):
         base = {"schema": 2, "item": "X", "item_id": 123, "snapshot_utc": "2026-09-09T00:00:00Z",
                 "pool": "p.json", "status": "ABSTAIN", "abstain_reason": "r",
-                "quantity": "q", "confidence": None, "bracket": None, "warnings": [],
+                "quantity": "q", "bracket": None, "warnings": [],
                 "anchors": None}
         base.update(over)
         return base
@@ -387,31 +387,32 @@ class TestValidatorStrictness(unittest.TestCase):
         self._must_fail(self._est(snapshot_utc="2026-13-01T00:00:00Z"), "snapshot_utc")
 
     def test_boolean_bracket_endpoint_fails(self):
-        self._must_fail(self._est(status="ESTIMATE", confidence="LOW",
+        self._must_fail(self._est(status="ESTIMATE",
                                   bracket=[True, 5], anchors={"above": {"purchased": 1},
                                                               "below": {"purchased": 2}}),
                         "bracket")
 
-    def test_bad_confidence_fails(self):
-        self._must_fail(self._est(status="ESTIMATE", confidence="CERTAIN",
+    def test_bundle_entity_type_fails(self):
+        # v0 scope: assets only; any other entity_type is a schema error
+        self._must_fail(self._est(status="ESTIMATE", entity_type="bundle",
                                   bracket=[1, 2], anchors={"above": {"purchased": 1},
                                                            "below": {"purchased": 2}}),
-                        "confidence")
+                        "entity_type must be 'asset'")
 
     def test_negative_anchor_count_fails(self):
-        self._must_fail(self._est(status="ESTIMATE", confidence="LOW", bracket=[1, 2],
+        self._must_fail(self._est(status="ESTIMATE", bracket=[1, 2],
                                   anchors={"above": {"purchased": -3},
                                            "below": {"purchased": 2}}),
                         "anchor count")
 
     def test_inverted_estimate_bracket_fails(self):
-        self._must_fail(self._est(status="ESTIMATE", confidence="LOW", bracket=[5, 1],
+        self._must_fail(self._est(status="ESTIMATE", bracket=[5, 1],
                                   anchors={"above": {"purchased": 1},
                                            "below": {"purchased": 5}}),
                         "inverted")
 
     def test_bracket_outside_anchors_fails(self):
-        self._must_fail(self._est(status="ESTIMATE", confidence="LOW", bracket=[1, 500],
+        self._must_fail(self._est(status="ESTIMATE", bracket=[1, 500],
                                   anchors={"above": {"purchased": 10},
                                            "below": {"purchased": 2}}),
                         "inconsistent")

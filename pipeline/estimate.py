@@ -22,17 +22,19 @@ TARGETS = {
 }
 
 
-def load_anchors():
+def load_anchors(path=None):
+    """THE one anchor loader (v0 scope: assets only). Typed keys, no aliases.
+    Bundle records are refused here — out of product scope — so they can never
+    enter the evidence set through any entry point."""
     anchors = {}
-    p = os.path.join(ROOT, "anchors", "anchors_harden.jsonl")
+    p = path or os.path.join(ROOT, "anchors", "anchors_harden.jsonl")
     for l in open(p):
         rec = json.loads(l)
-        # typed identity ONLY (Astra round-4 finding 3): no untyped plain-ID
-        # aliases. A bundle alias must never become asset evidence via key
-        # fallback; every lookup preserves the entity type.
-        if rec.get("item_id"):
-            et = "bundle" if "entity_type:bundle" in (rec.get("parse_notes") or []) else "asset"
-            anchors[f"{et}:{rec['item_id']}"] = rec
+        if not rec.get("item_id"):
+            continue
+        if "entity_type:bundle" in (rec.get("parse_notes") or []):
+            continue  # bundles out of scope for the experimental release
+        anchors[f"asset:{rec['item_id']}"] = rec
     return anchors
 
 
@@ -52,38 +54,38 @@ def estimate_target(name, tid, pool_rel, anchors):
                anchors_path=os.path.join(ROOT, "anchors", "anchors_harden.jsonl"))
 
 
-def run(anchors_path=None, pools=None, out_path=None):
-    """Programmatic entry over explicit paths (test/batch harness surface).
-    pools: list of pool-file paths; each must contain {"item_ids": [...],
-    "manifest": {...}} like the shipped wrapped pools. Returns row dicts."""
-    import estimate_schema
-    if anchors_path is None:
-        anchors = load_anchors()
-    else:
-        anchors = {}
-        for l in open(anchors_path):
-            rec = json.loads(l)
-            # typed identity ONLY (Astra round-4 finding 3): no untyped
-            # plain-ID aliases; entity type must survive every lookup.
-            et = rec.get("entity_type", "asset")
-            anchors[f"{et}:{rec['item_id']}"] = rec
+def run(anchors_path=None, pools=None, out_path=None, targets=None):
+    """Programmatic entry over explicit paths (test/batch harness surface,
+    and THE estimation path the CLI wraps). pools: list of pool-file paths;
+    each must contain {"item_ids": [...], "manifest": {...}}. targets: optional
+    list of item ids to estimate (default: the shipped target list)."""
+    anchors = load_anchors(anchors_path)
     pool_files = pools or [p for _, p in sorted(TARGETS.items())]
+    want = {str(t) for t in targets} if targets else None
     out = []
     for pf in pool_files:
         blob = json.load(open(pf))
         ids = blob["item_ids"]
         errs = pool_manifest.validate(blob["manifest"], ids)
-        if errs:
-            r = {"status": "ABSTAIN", "reason": "INVALID_POOL",
-                 "detail": "; ".join(errs)}
+        # target selection: explicit ids when given, else the shipped target
+        # that this pool file was built for, else the pool's second entry.
+        if want:
+            tids = [t for t in ids if str(t) in want]
         else:
-            r = bracket.rank_bracket(ids, str(ids[1] if len(ids) > 1 else ids[0]),
-                                     anchors)
-        snap = blob["manifest"].get("finished_utc")
-        out.append(row(os.path.basename(pf), ids[1] if len(ids) > 1 else ids[0],
-                       r, snapshot_utc=snap, pool=os.path.abspath(pf),
-                       anchors_path=anchors_path or os.path.join(
-                           ROOT, "anchors", "anchors_harden.jsonl")))
+            tids = [tid for name, (tid, pr) in TARGETS.items()
+                    if pr == pf and str(tid) in [str(x) for x in ids]]
+            tids = tids or [ids[1] if len(ids) > 1 else ids[0]]
+        for tid in tids:
+            if errs:
+                r = {"status": "ABSTAIN", "reason": "INVALID_POOL",
+                     "detail": "; ".join(errs)}
+            else:
+                r = bracket.rank_bracket(ids, str(tid), anchors)
+            snap = blob["manifest"].get("finished_utc")
+            out.append(row(str(tid), tid, r, snapshot_utc=snap,
+                           pool=os.path.abspath(pf),
+                           anchors_path=anchors_path or os.path.join(
+                               ROOT, "anchors", "anchors_harden.jsonl")))
     if out_path is not None:
         tmp = out_path + ".tmp"
         with open(tmp, "w") as f:
@@ -106,7 +108,7 @@ def main():
     os.replace(tmp, dest)  # atomic publication (Astra 2.9)
     for r in out:
         if r["status"] == "ESTIMATE":
-            print(f"{r['item']}: {r['bracket']} ({r['confidence']})")
+            print(f"{r['item']}: {r['bracket']}")
         else:
             print(f"{r['item']}: ABSTAIN {r['abstain_reason'][:80]}")
 
