@@ -270,6 +270,64 @@ class TestSerializerParity(unittest.TestCase):
         self.assertEqual(est["calibration_status"], "uncalibrated")
 
 
+class TestRealEntryPoints(unittest.TestCase):
+    """Astra round-3 5E: both REAL entry points against the same fixture data.
+    Compares semantic payload fields; byte identity is NOT claimed (different
+    row labels/formatting between batch and CLI are legitimate)."""
+
+    def _fixture_repo(self, tmp):
+        import json as J, os, shutil
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        anchors = os.path.join(tmp, "anchors_harden.jsonl")
+        with open(anchors, "w") as f:
+            for k, a in BASELINE_ANCHORS.items():
+                rec = dict(a)
+                rec["item_id"] = int(k.split(":")[-1])
+                rec["entity_type"] = "asset"
+                f.write(J.dumps(rec) + "\n")
+        pool = {"item_ids": ["1", "2", "3"],
+                "manifest": {"query": {"Keyword": "k", "SortType": 2,
+                             "SortAggregation": 5, "salesTypeFilter": 1,
+                             "includeNotForSale": True},
+                             "pages": [{"cursor": "", "next_cursor": "",
+                                        "fetched_utc": "2026-09-09T00:00:00Z",
+                                        "count": 3,
+                                        "raw_response_sha256": "x" * 64}],
+                             "finished_utc": "2026-09-09T00:00:00Z",
+                             "complete": True}}
+        pf = os.path.join(tmp, "pool.json")
+        J.dump(pool, open(pf, "w"))
+        return root, anchors, pf
+
+    def test_batch_and_cli_agree_semantically(self):
+        import json as J, os, subprocess, tempfile, shutil
+        tmp = tempfile.mkdtemp()
+        try:
+            root, anc, pf = self._fixture_repo(tmp)
+            # CLI entry point (real subprocess)
+            r_cli = subprocess.run(
+                ["python3", os.path.join(root, "pipeline", "estimate_cli.py"),
+                 "--anchors", anc, "--pool", pf, "--item-id", "2"],
+                capture_output=True, text=True, timeout=60, cwd=tmp)
+            self.assertEqual(r_cli.returncode, 0, r_cli.stderr[-400:])
+            self.assertTrue(r_cli.stdout.strip(),
+                            "CLI produced no stdout: " + r_cli.stderr[-300:])
+            cli = J.loads(r_cli.stdout[r_cli.stdout.index("{"):])
+            # batch entry point (real module main with args) — same fixture data
+            import importlib
+            sys.path.insert(0, os.path.join(root, "pipeline"))
+            est = importlib.import_module("estimate")
+            importlib.reload(est)
+            rows = est.run(anchors_path=anc, pools=[pf], out_path=None)
+            batch = [r for r in rows if str(r.get("item_id")) == "2"]
+            self.assertTrue(batch, "batch produced no row for item 2")
+            self.assertEqual(batch[0]["status"], cli["status"])
+            self.assertEqual(batch[0]["bracket"], cli["bracket"])
+            self.assertEqual(batch[0]["quantity"], cli["quantity"])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 class TestValidatorStrictness(unittest.TestCase):
     """Astra 2.7: garbage must FAIL, with structured errors."""
 

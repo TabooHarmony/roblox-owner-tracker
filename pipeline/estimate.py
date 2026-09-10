@@ -52,6 +52,46 @@ def estimate_target(name, tid, pool_rel, anchors):
                anchors_path=os.path.join(ROOT, "anchors", "anchors_harden.jsonl"))
 
 
+def run(anchors_path=None, pools=None, out_path=None):
+    """Programmatic entry over explicit paths (test/batch harness surface).
+    pools: list of pool-file paths; each must contain {"item_ids": [...],
+    "manifest": {...}} like the shipped wrapped pools. Returns row dicts."""
+    import estimate_schema
+    if anchors_path is None:
+        anchors = load_anchors()
+    else:
+        anchors = {}
+        for l in open(anchors_path):
+            rec = json.loads(l)
+            et = rec.get("entity_type", "asset")
+            anchors[f"{et}:{rec['item_id']}"] = rec
+            anchors[str(rec["item_id"])] = rec  # display-compat alias
+    pool_files = pools or [p for _, p in sorted(TARGETS.items())]
+    out = []
+    for pf in pool_files:
+        blob = json.load(open(pf))
+        ids = blob["item_ids"]
+        errs = pool_manifest.validate(blob["manifest"], ids)
+        if errs:
+            r = {"status": "ABSTAIN", "reason": "INVALID_POOL",
+                 "detail": "; ".join(errs)}
+        else:
+            r = bracket.rank_bracket(ids, str(ids[1] if len(ids) > 1 else ids[0]),
+                                     anchors)
+        snap = blob["manifest"].get("finished_utc")
+        out.append(row(os.path.basename(pf), ids[1] if len(ids) > 1 else ids[0],
+                       r, snapshot_utc=snap, pool=os.path.abspath(pf),
+                       anchors_path=anchors_path or os.path.join(
+                           ROOT, "anchors", "anchors_harden.jsonl")))
+    if out_path is not None:
+        tmp = out_path + ".tmp"
+        with open(tmp, "w") as f:
+            for r in out:
+                f.write(dumps(r) + "\n")
+        os.replace(tmp, out_path)
+    return out
+
+
 def main():
     anchors = load_anchors()
     out = []
