@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>roblox-owner-tracker — experimental rank-neighbor estimates</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: 56rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+  h1 { font-size: 1.4rem; margin-bottom: 0.2rem; }
+  .sub { color: gray; margin-top: 0; }
+  .banner { border: 1px solid #b8860b; background: #fff8dc22; padding: 0.6rem 0.9rem; border-radius: 6px; font-size: 0.9rem; }
+  .card { border: 1px solid #8884; border-radius: 8px; padding: 0.8rem 1rem; margin: 1rem 0; }
+  .card h2 { font-size: 1.05rem; margin: 0 0 0.2rem; }
+  .meta { font-family: ui-monospace, monospace; font-size: 0.78rem; color: gray; word-break: break-all; }
+  .bracket { font-size: 1.3rem; font-family: ui-monospace, monospace; }
+  .warn { color: #b8860b; font-size: 0.85rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; margin-top: 0.4rem; }
+  th, td { text-align: left; padding: 0.25rem 0.5rem; border-bottom: 1px solid #8883; }
+  .abstain { color: #c33; font-weight: 600; }
+  footer { margin-top: 2.5rem; font-size: 0.8rem; color: gray; }
+  a { color: #06c; }
+  @media (prefers-color-scheme: dark) { a { color: #6ab0ff; } .banner { background: #332a0822; } }
+</style>
+</head>
+<body>
+<h1>roblox-owner-tracker</h1>
+<p class="sub">Experimental owner-count estimates via rank-neighbor comparison. Method by <strong>Maggy (Maggy Rarefication)</strong>; this is a deterministic reimplementation.</p>
+<div class="banner">
+  <strong>Experimental &mdash; uncalibrated.</strong> These are not owner counts and not confidence intervals.
+  Each result is a comparison against neighboring items in an all-time best-selling ranking, built from scraped wiki evidence.
+  Wide brackets mean weak evidence, not precision. Bundles are out of scope.
+</div>
+<main id="out"><p>Loading estimates&hellip;</p></main>
+<footer id="foot"></footer>
+<script>
+(async () => {
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const out = document.getElementById('out');
+  try {
+    const res = await fetch('estimates/estimates_v2.jsonl', {cache: 'no-cache'});
+    if (!res.ok) throw new Error('estimates fetch HTTP ' + res.status);
+    const rows = res.text().then(t => t.trim().split('\n').filter(Boolean).map(JSON.parse));
+    const rows2 = await rows;
+    let html = '';
+    for (const r of rows2) {
+      const a = r.anchors || {};
+      const row = (label, e) => e && `<tr><td>${esc(label)}</td><td>${esc(e.purchased ?? '?')}</td><td class="meta">${esc(e.until || e.as_of || '')}</td><td>${esc(e.note || '')}</td></tr>`;
+      html += `<section class="card">
+        <h2>${esc(r.item)} <span class="meta">id ${esc(r.item_id)}</span></h2>
+        <p class="meta">snapshot ${esc(r.snapshot_utc || '?')} &middot; pool ${esc(r.pool || '?')} &middot; ${esc(r.quantity || '')}</p>
+        ${r.status === 'ESTIMATE'
+          ? `<p class="bracket">${esc(r.bracket[0]).toLocaleString ? '' : ''}${Number(r.bracket[0]).toLocaleString('en-US')} &ndash; ${Number(r.bracket[1]).toLocaleString('en-US')} owners</p>`
+          : `<p class="abstain">${esc(r.status)}: ${esc(r.abstain_reason || '')}</p>`}
+        ${(r.warnings || []).length ? `<p class="warn">warning: ${r.warnings.map(esc).join('; ')}</p>` : ''}
+        <table>
+          <tr><th>neighbor</th><th>owners (wiki, last observed)</th><th>as of</th><th>note</th></tr>
+          ${row('above', a.above)}${row('below', a.below)}
+        </table>
+        <details><summary class="meta">provenance</summary><p class="meta">anchors_sha256 ${esc(r.anchors_sha256 || '?')}<br>code_commit ${esc(r.code_commit || '?')}<br>parser_version ${esc(r.parser_version || '?')}<br>schema ${esc(r.schema)}</p></details>
+      </section>`;
+    }
+    out.innerHTML = html;
+    let cross = '';
+    try {
+      const c = await (await fetch('docs/crossval_summary.json', {cache: 'no-cache'})).json();
+      const f = c.flow || {};
+      cross = `Cross-validation (development comparison, not an untouched validation set): ${f.agreements} agreements, ${f.disagreements} disagreements among ${f.eligible_records} eligible records.`;
+    } catch (e) { /* summary optional */ }
+    document.getElementById('foot').innerHTML =
+      `${cross}<br>Deterministic pipeline; recompute from a clean checkout with <code>make verify-clean</code>. License: MPL-2.0.`;
+  } catch (e) {
+    out.innerHTML = `<p class="abstain">Failed to load estimates: ${esc(e.message)}</p>`;
+  }
+})();
+</script>
+</body>
+</html>

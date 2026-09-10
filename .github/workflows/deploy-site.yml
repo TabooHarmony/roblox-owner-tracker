@@ -1,0 +1,34 @@
+# Deploy the static viewer to GitHub Pages on every push to main.
+# Data files (estimates, crossval summary) are copied from the repo, which is
+# the committed, replay-verified artifact — the site never computes anything.
+name: deploy-site
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble site
+        run: |
+          mkdir -p site/estimates site/docs
+          cp estimates/estimates_v2.jsonl site/estimates/
+          cp docs/crossval_summary.json site/docs/ || true
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
