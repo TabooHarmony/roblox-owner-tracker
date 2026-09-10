@@ -3,76 +3,251 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>roblox-owner-tracker — experimental rank-neighbor estimates</title>
+<title>roblox-owner-tracker — item lookup</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { font-family: system-ui, sans-serif; max-width: 56rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
-  h1 { font-size: 1.4rem; margin-bottom: 0.2rem; }
-  .sub { color: gray; margin-top: 0; }
-  .banner { border: 1px solid #b8860b; background: #fff8dc22; padding: 0.6rem 0.9rem; border-radius: 6px; font-size: 0.9rem; }
-  .card { border: 1px solid #8884; border-radius: 8px; padding: 0.8rem 1rem; margin: 1rem 0; }
-  .card h2 { font-size: 1.05rem; margin: 0 0 0.2rem; }
-  .meta { font-family: ui-monospace, monospace; font-size: 0.78rem; color: gray; word-break: break-all; }
-  .bracket { font-size: 1.3rem; font-family: ui-monospace, monospace; }
-  .warn { color: #b8860b; font-size: 0.85rem; }
-  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; margin-top: 0.4rem; }
-  th, td { text-align: left; padding: 0.25rem 0.5rem; border-bottom: 1px solid #8883; }
-  .abstain { color: #c33; font-weight: 600; }
-  footer { margin-top: 2.5rem; font-size: 0.8rem; color: gray; }
-  a { color: #06c; }
-  @media (prefers-color-scheme: dark) { a { color: #6ab0ff; } .banner { background: #332a0822; } }
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; background: #101418; color: #e6e8ea;
+         margin: 0; padding: 2rem 1rem; }
+  main { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 1.25rem; margin: 0 0 .25rem; }
+  .sub { color: #9aa3ab; font-size: .85rem; margin-bottom: 1rem; }
+  .sub a { color: #7ab8ff; }
+  form { display: flex; gap: .5rem; margin-bottom: 1rem; }
+  input { flex: 1; padding: .6rem .8rem; font-size: 1rem; border-radius: 8px;
+          border: 1px solid #3a444d; background: #1a2128; color: #e6e8ea; }
+  button { padding: .6rem 1.1rem; font-size: 1rem; border-radius: 8px; border: 0;
+           background: #2f6fdb; color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  .banner { border: 1px solid #5a4d1f; background: #241f0e; color: #d9c36a;
+            border-radius: 8px; padding: .6rem .8rem; font-size: .8rem; margin-bottom: 1rem; }
+  .err { border: 1px solid #6b2737; background: #241014; color: #e08a96;
+         border-radius: 8px; padding: .6rem .8rem; font-size: .85rem; margin-bottom: 1rem; }
+  .card { border: 1px solid #2a333c; border-radius: 10px; padding: 1rem 1.1rem;
+          background: #161c22; }
+  .card h2 { font-size: 1.05rem; margin: 0 0 .15rem; }
+  .meta { color: #9aa3ab; font-size: .8rem; margin-bottom: .8rem; }
+  .bracket { font-size: 2rem; font-weight: 700; margin: .4rem 0; }
+  .lbl { color: #9aa3ab; font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; }
+  .anchor { border-top: 1px solid #232c34; padding: .6rem 0; font-size: .85rem; }
+  .anchor b { color: #cfd6dc; }
+  .rank-line { font-size: .85rem; margin: .4rem 0; }
+  details { margin-top: .8rem; font-size: .8rem; color: #9aa3ab; }
+  details pre { white-space: pre-wrap; word-break: break-all; font-size: .7rem; }
+  .warn { color: #d9c36a; font-size: .8rem; margin-top: .4rem; }
+  .abstain { border-left: 3px solid #5a4d1f; padding: .5rem .8rem; background: #1c1a12;
+             border-radius: 0 8px 8px 0; font-size: .9rem; margin-top: .5rem; }
 </style>
 </head>
 <body>
-<h1>roblox-owner-tracker</h1>
-<p class="sub">Experimental owner-count estimates via rank-neighbor comparison. Method by <strong>Maggy (Maggy Rarefication)</strong>; this is a deterministic reimplementation.</p>
-<div class="banner">
-  <strong>Experimental &mdash; uncalibrated.</strong> These are not owner counts and not confidence intervals.
-  Each result is a comparison against neighboring items in an all-time best-selling ranking, built from scraped wiki evidence.
-  Wide brackets mean weak evidence, not precision. Bundles are out of scope.
-</div>
-<main id="out"><p>Loading estimates&hellip;</p></main>
-<footer id="foot"></footer>
+<main>
+  <h1>roblox-owner-tracker</h1>
+  <div class="sub">experimental rank-neighbor comparison &middot; method by Maggy (Maggy Rarefication)
+    &middot; <a href="https://github.com/TabooHarmony/roblox-owner-tracker">source</a></div>
+  <div class="banner">Experimental, uncalibrated. The interval below is a rank-neighbor
+    comparison from frozen pool snapshots and reviewed wiki anchors — not a verified bound
+    and not a confidence interval. Ordering is approximate (~17% local inversions measured).</div>
+  <form id="f">
+    <input id="id" inputmode="numeric" pattern="\d*" placeholder="Roblox asset ID" autocomplete="off">
+    <button id="go" type="submit">Look up</button>
+  </form>
+  <div id="out"></div>
+</main>
 <script>
-(async () => {
-  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const out = document.getElementById('out');
-  try {
-    const res = await fetch('estimates/estimates_v2.jsonl', {cache: 'no-cache'});
-    if (!res.ok) throw new Error('estimates fetch HTTP ' + res.status);
-    const rows = res.text().then(t => t.trim().split('\n').filter(Boolean).map(JSON.parse));
-    const rows2 = await rows;
-    let html = '';
-    for (const r of rows2) {
-      const a = r.anchors || {};
-      const row = (label, e) => e && `<tr><td>${esc(label)}</td><td>${esc(e.purchased ?? '?')}</td><td class="meta">${esc(e.until || e.as_of || '')}</td><td>${esc(e.note || '')}</td></tr>`;
-      html += `<section class="card">
-        <h2>${esc(r.item)} <span class="meta">id ${esc(r.item_id)}</span></h2>
-        <p class="meta">snapshot ${esc(r.snapshot_utc || '?')} &middot; pool ${esc(r.pool || '?')} &middot; ${esc(r.quantity || '')}</p>
-        ${r.status === 'ESTIMATE'
-          ? `<p class="bracket">${esc(r.bracket[0]).toLocaleString ? '' : ''}${Number(r.bracket[0]).toLocaleString('en-US')} &ndash; ${Number(r.bracket[1]).toLocaleString('en-US')} owners</p>`
-          : `<p class="abstain">${esc(r.status)}: ${esc(r.abstain_reason || '')}</p>`}
-        ${(r.warnings || []).length ? `<p class="warn">warning: ${r.warnings.map(esc).join('; ')}</p>` : ''}
-        <table>
-          <tr><th>neighbor</th><th>owners (wiki, last observed)</th><th>as of</th><th>note</th></tr>
-          ${row('above', a.above)}${row('below', a.below)}
-        </table>
-        <details><summary class="meta">provenance</summary><p class="meta">anchors_sha256 ${esc(r.anchors_sha256 || '?')}<br>code_commit ${esc(r.code_commit || '?')}<br>parser_version ${esc(r.parser_version || '?')}<br>schema ${esc(r.schema)}</p></details>
-      </section>`;
-    }
-    out.innerHTML = html;
-    let cross = '';
-    try {
-      const c = await (await fetch('docs/crossval_summary.json', {cache: 'no-cache'})).json();
-      const f = c.flow || {};
-      cross = `Cross-validation (development comparison, not an untouched validation set): ${f.agreements} agreements, ${f.disagreements} disagreements among ${f.eligible_records} eligible records.`;
-    } catch (e) { /* summary optional */ }
-    document.getElementById('foot').innerHTML =
-      `${cross}<br>Deterministic pipeline; recompute from a clean checkout with <code>make verify-clean</code>. License: MPL-2.0.`;
-  } catch (e) {
-    out.innerHTML = `<p class="abstain">Failed to load estimates: ${esc(e.message)}</p>`;
+const POOLS = ["crown_pool_nfl_wrapped.json","party_pool_nfl_wrapped.json",
+               "stormbreak_pool_nfl_wrapped.json","confetti_pool_wrapped.json"];
+const ANCHORS = "anchors_compact.json";
+const ADJ = {"asset:96988749":true,"asset:14932":true}; // fetched from docs at runtime below
+let ANCHOR_DB = null;
+
+const MONTHS = {january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,
+  september:9,october:10,november:11,december:12,
+  jan:1,feb:2,mar:3,apr:4,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12};
+
+function parseUntil(s) {
+  if (!s) return null;
+  const m = String(s).trim().match(/^([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})$/)
+         || String(s).trim().match(/^(\d{1,2})\s+([A-Za-z]+)\.?,?\s+(\d{4})$/);
+  if (!m) return null;
+  let mo, d, y;
+  if (/[A-Za-z]/.test(m[1])) { mo = MONTHS[m[1].toLowerCase()]; d = +m[2]; y = +m[3]; }
+  else { d = +m[1]; mo = MONTHS[m[2].toLowerCase()]; y = +m[3]; }
+  if (!mo) return null;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+  return [y, mo, d];
+}
+
+function cmpDate(a, b) { return a[0] - b[0] || a[1] - b[1] || a[2] - b[2]; }
+
+const MIN_CLOSED_YEAR = 2012, MAX_SANE_WIDTH_RATIO = 4.0;
+
+function anchorEligible(rec) {
+  if (rec.parse_ok === false) return [false, "parse not ok"];
+  if ((rec.parse_notes || []).includes("entity_type:bundle")) return [false, "bundle record (out of scope)"];
+  if (ADJ["asset:" + rec.item_id]) return [false, "adjudicated wiki value erroneous (Sales=0 per economy API)"];
+  if (rec.sale_state !== "closed") return [false, "not closed-final (" + rec.sale_state + ")"];
+  if (!rec.until) return [false, "no until date"];
+  const wins = rec.windows;
+  if (!wins || !wins.length) return [false, "no window model"];
+  for (const w of wins) if (w.state !== "resolved") return [false, "window " + w.index + " unresolved/open"];
+  let lastClose = null;
+  for (const w of wins) {
+    if (!w.until) continue;
+    const du = parseUntil(w.until);
+    if (du && (!lastClose || cmpDate(du, lastClose) > 0)) lastClose = du;
   }
+  if (!lastClose) return [false, "no parseable window close"];
+  if (lastClose[0] < MIN_CLOSED_YEAR) return [false, "pre-2012 closure"];
+  if (rec.purchased == null) return [false, rec.unpaired_purchased != null ? "unpaired count only" : "no purchase count"];
+  if (!Number.isInteger(rec.purchased) || rec.purchased < 0) return [false, "malformed purchase count"];
+  const a = parseUntil(rec.purchased_as_of);
+  if (!a) return [false, "unparseable purchased_as_of"];
+  if (cmpDate(a, lastClose) <= 0) return [false, "stale count: not observed after last window close"];
+  if (rec.purchase_count_scope !== "single") return [false, "count channel coverage unproven"];
+  return [true, "ok"];
+}
+
+function rankBracket(poolIds, targetId, db) {
+  targetId = String(targetId);
+  if (poolIds.includes(targetId) === false)
+    return { status: "ABSTAIN", reason: "TARGET_NOT_IN_POOL",
+             detail: "target absent from all frozen pool snapshots" };
+  if (new Set(poolIds).size !== poolIds.length)
+    return { status: "ABSTAIN", reason: "DUPLICATE_POOL_IDS", detail: "duplicate id(s); ranking ambiguous" };
+  const ti = poolIds.indexOf(targetId);
+  if (poolIds.lastIndexOf(targetId) !== ti)
+    return { status: "ABSTAIN", reason: "TARGET_DUPLICATED", detail: "target appears multiple times in pool" };
+  let above = null, below = null;
+  for (let j = ti - 1; j >= 0; j--) {
+    const a = db["asset:" + poolIds[j]];
+    if (a && anchorEligible(a)[0]) { above = [j, a]; break; }
+  }
+  for (let j = ti + 1; j < poolIds.length; j++) {
+    const a = db["asset:" + poolIds[j]];
+    if (a && anchorEligible(a)[0]) { below = [j, a]; break; }
+  }
+  if (!above || !below) {
+    const m = [];
+    if (!above) m.push("no eligible closed-final anchor above");
+    if (!below) m.push("no eligible closed-final anchor below");
+    const suffix = !above ? (!below ? "_AND_BELOW" : "_ABOVE") : "_BELOW";
+    return { status: "ABSTAIN", reason: "NO_ELIGIBLE_ANCHOR" + suffix, detail: m.join("; ") };
+  }
+  const hi = above[1].purchased, lo = below[1].purchased;
+  if (hi == null || lo == null) return { status: "ABSTAIN", reason: "ANCHOR_COUNT_MISSING", detail: "eligible anchor has no paired count" };
+  if (hi < lo) return { status: "ABSTAIN", reason: "ANCHOR_INVERSION",
+    detail: "upper-rank anchor purchased=" + hi + " < lower-rank anchor purchased=" + lo };
+  if (hi === lo) return { status: "ABSTAIN", reason: "SINGLETON_INTERVAL",
+    detail: "both anchors report identical counts" };
+  const warnings = [];
+  if (lo / hi < 1 / MAX_SANE_WIDTH_RATIO) warnings.push("wide bracket (" + (hi / Math.max(lo, 1)).toFixed(1) + "x)");
+  return { status: "ESTIMATE", warnings,
+    bracket: [lo, hi], rank_in_pool: ti, pool_len: poolIds.length,
+    above: { rank: above[0], purchased: hi, title: above[1].title,
+             purchased_as_of: above[1].purchased_as_of, until: above[1].until },
+    below: { rank: below[0], purchased: lo, title: below[1].title,
+             purchased_as_of: below[1].purchased_as_of, until: below[1].until },
+    note: "rank-neighbor interval, NOT a verified bound" };
+}
+
+function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+function fmt(n) { return n.toLocaleString("en-US"); }
+
+async function lookup(idStr) {
+  const out = document.getElementById("out");
+  out.innerHTML = "";
+  const id = Number(idStr);
+  if (!Number.isInteger(id) || id <= 0) {
+    out.innerHTML = '<div class="err">Enter a numeric Roblox asset ID.</div>'; return;
+  }
+  const card = document.createElement("div"); card.className = "card";
+  card.textContent = "Loading\u2026"; out.appendChild(card);
+
+  // item metadata via CORS proxy (falls back gracefully if proxy is down)
+  let meta = null;
+  try {
+    const r = await fetch("https://rbx-proxy.tabooharmony.workers.dev/economy.roblox.com/v2/assets/" + id + "/details");
+    if (r.ok) meta = await r.json();
+  } catch (e) { /* proxy down: name is optional, bracket math is local */ }
+
+  const rec = ANCHOR_DB["asset:" + id];
+  let res;
+  let poolFile = null;
+  if (rec && rec.pool) {
+    poolFile = rec.pool;
+  } else {
+    // no anchor: still try every pool for membership (membership is what matters)
+    res = null;
+  }
+  // find membership across all pools
+  let hit = null;
+  for (const p of POOLS) {
+    const ids = await poolIds(p);
+    if (ids.includes(String(id))) { hit = { pool: p, ids }; break; }
+  }
+  if (!hit) {
+    showIdentityOnly(meta, id, card);
+    return;
+  }
+  res = rankBracket(hit.ids, id, ANCHOR_DB);
+  renderResult(meta, id, res, hit.pool, card);
+}
+
+const poolCache = {};
+async function poolIds(file) {
+  if (!poolCache[file]) {
+    const blob = await (await fetch(file)).json();
+    poolCache[file] = blob.item_ids.map(String);
+  }
+  return poolCache[file];
+}
+
+function showIdentityOnly(meta, id, card) {
+  const name = meta && meta.Name ? meta.Name : "unknown item";
+  card.innerHTML =
+    "<h2>" + esc(name) + "</h2>" +
+    '<div class="meta">ID ' + fmt(id) + (meta ? " \u00b7 by " + esc(meta.Creator ? meta.Creator.Name : "?") : "") + "</div>" +
+    '<div class="abstain">ABSTAIN \u2014 TARGET_NOT_IN_POOL: this item is not in any frozen ranking snapshot, ' +
+    "so there is no rank position to compare neighbors against. Only items in the four reviewed " +
+    "snapshots (best-selling hats/hair around the four shipped targets) can be bracketed.</div>";
+}
+
+function renderResult(meta, id, res, poolFile, card) {
+  const name = meta && meta.Name ? meta.Name : (res && res.above ? "item " + id : "item " + id);
+  let html = "<h2>" + esc(name) + "</h2>";
+  html += '<div class="meta">ID ' + fmt(id) +
+    (meta ? " \u00b7 by " + esc(meta.Creator ? meta.Creator.Name : "?") : "") +
+    " \u00b7 pool: " + esc(poolFile) + "</div>";
+  if (res.status === "ESTIMATE") {
+    html += '<div class="lbl">Cumulative purchases (lower-bound interval)</div>';
+    html += '<div class="bracket">' + fmt(res.bracket[0]) + " \u2013 " + fmt(res.bracket[1]) + "</div>";
+    html += '<div class="rank-line">rank ' + (res.rank_in_pool + 1) + " of " + res.pool_len +
+            " in snapshot \u00b7 between: " + esc(res.above.title) + " (" + fmt(res.above.purchased) +
+            " sales) and " + esc(res.below.title) + " (" + fmt(res.below.purchased) + " sales)</div>";
+    if (res.warnings.length) html += '<div class="warn">\u26a0 ' + esc(res.warnings.join("; ")) + "</div>";
+    html += '<div class="warn">' + esc(res.note) + "</div>";
+  } else {
+    html += '<div class="abstain">ABSTAIN \u2014 ' + esc(res.reason) + ": " + esc(res.detail || "") + "</div>";
+  }
+  html += "<details><summary>evidence</summary><pre>" +
+    esc(JSON.stringify({ above: res.above, below: res.below, warnings: res.warnings }, null, 1)) + "</pre></details>";
+  card.innerHTML = html;
+}
+
+(async function init() {
+  ANCHOR_DB = await (await fetch(ANCHORS)).json();
+  document.getElementById("go").disabled = false;
+  const params = new URLSearchParams(location.search);
+  if (params.get("id")) { document.getElementById("id").value = params.get("id"); lookup(params.get("id")); }
 })();
+document.getElementById("f").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const v = document.getElementById("id").value.trim();
+  history.replaceState(null, "", "?id=" + encodeURIComponent(v));
+  lookup(v);
+});
+document.getElementById("go").disabled = true;
 </script>
 </body>
 </html>
