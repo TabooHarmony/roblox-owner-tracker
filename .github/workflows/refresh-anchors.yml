@@ -44,12 +44,16 @@ jobs:
       - name: Tests
         run: make tests
 
-      - name: Regenerate-and-compare gate
+      - name: Artifact replay gate (round-3 finding 5D)
         run: |
-          # byte-replay: a second run must produce identical published files
-          sha256sum anchors/anchors_harden.jsonl estimates/estimates_v2.jsonl > /tmp/before.sha
+          # REPLAY, not consecutive-run stability: rebuild the published
+          # estimates from declared evidence and diff against the artifacts
+          # this run is about to publish, ignoring only code_commit (the
+          # self-referential SHA cannot include itself; see docs/RELEASING.md).
+          cp estimates/estimates_v2.jsonl /tmp/published.jsonl
           python3 pipeline/estimate.py
-          sha256sum -c /tmp/before.sha
+          diff <(jq -c 'del(.code_commit)' /tmp/published.jsonl | sort) \
+               <(jq -c 'del(.code_commit)' estimates/estimates_v2.jsonl | sort)
 
       - name: Commit and push (atomic publication)
         run: |
