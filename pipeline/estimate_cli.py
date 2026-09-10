@@ -21,7 +21,8 @@ def main():
     args = ap.parse_args()
 
     rows = estimate.run(anchors_path=os.path.abspath(args.anchors),
-                        pools=[args.pool], out_path=None)
+                        pools=[args.pool], out_path=None,
+                        targets=[args.item_id])
     # single-target run: emit only the row for the requested id
     want = str(args.item_id)
     out = next((r for r in rows if str(r.get("item_id")) == want), None)

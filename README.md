@@ -99,8 +99,11 @@ Parser rules that matter:
   wins. HTML comments are stripped before any extraction.
 
 Estimate record (estimates/*.jsonl, schema 2): `schema, item, item_id,
-snapshot_utc, pool, status (ESTIMATE | ABSTAIN), confidence, bracket, warnings,
-anchors{above,below}, quantity, note, abstain_reason`.
+snapshot_utc, pool, status (ESTIMATE | ABSTAIN), bracket, warnings,
+anchors{above,below}, quantity, note, abstain_reason`. There is no
+`confidence` field: the output is a rank-neighbor comparison over uncalibrated
+heuristics, and the anchors block shows the neighboring evidence directly.
+v0 scope is assets only; bundle records are refused at the merge boundary.
 
 ## License
 
