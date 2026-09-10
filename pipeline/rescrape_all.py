@@ -8,11 +8,14 @@ repaired: a truncated final line is dropped before appending). WITHOUT
 (<OUT>.prev) so seen titles are always re-fetched and refreshed - resume is
 never silently treated as refresh.
 """
+import hashlib
 import json, sys, time, os
 import urllib.request, urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import parse_wiki
+
+RUN_ID = hashlib.sha256((parse_wiki.__doc__ or "").encode()).hexdigest()[:16]
 
 # Repo-relative output; HARVEST_OUT_DIR env var overrides (dev tree points one level up).
 ROOT = os.environ.get(
@@ -66,6 +69,18 @@ def done_titles():
     return seen
 
 
+def _run_identity_ok():
+    """Resume only within the same parser generation (round-3 finding 5F):
+    resuming across a parser change would mix record generations in one file."""
+    sidecar = OUT + ".runid"
+    if not os.path.exists(sidecar):
+        return False
+    try:
+        return open(sidecar).read().strip() == RUN_ID
+    except OSError:
+        return False
+
+
 def main():
     if "--resume" not in sys.argv:
         # NEW RUN: never treat a stale checkpoint as refresh-complete (Astra 2.10)
@@ -81,8 +96,15 @@ def main():
             titles.append(json.loads(l)["title"])
     titles = sorted(set(titles))
 
+    if "--resume" in sys.argv and not _run_identity_ok():
+        raise SystemExit(
+            "refusing --resume: checkpoint was produced by a different parser "
+            "generation (run-id mismatch). Start a fresh run or delete the "
+            "checkpoint deliberately.")
     seen = done_titles()
     todo = [t for t in titles if t not in seen]
+    with open(OUT + ".runid", "w") as f:
+        f.write(RUN_ID)  # bind checkpoint to this parser generation
     print(f"total unique: {len(titles)} | done: {len(seen)} | todo: {len(todo)}", flush=True)
 
     batch_fail = 0

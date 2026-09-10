@@ -44,6 +44,15 @@ def _git_commit():
     env = os.environ.get("RELEASE_COMMIT")
     if env:
         return env
+    # Round-3 finding 5D: unpinned regeneration must be LOUD about its identity,
+    # never silently one-commit-behind. estimate.py/CI set RELEASE_COMMIT at
+    # release; local runs print the warning once per process.
+    try:
+        import sys as _s
+        print("WARNING: RELEASE_COMMIT not set; code_commit = working-tree HEAD",
+              file=_s.stderr)
+    except Exception:
+        pass
     try:
         import subprocess
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -53,22 +62,26 @@ def _git_commit():
         return "unknown"
 
 
-def _anchors_digest():
-    p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                     "anchors", "anchors_harden.jsonl")
+def anchors_digest(path=None):
+    """Digest of the anchors file ACTUALLY used (Astra round-3 finding 5C):
+    the caller passes the path it loaded; a custom --anchors file must
+    fingerprint itself, not the default database. No import-time caching:
+    the digest is computed per call from the real bytes."""
+    if path is None:
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "anchors", "anchors_harden.jsonl")
     try:
-        return hashlib.sha256(open(p, "rb").read()).hexdigest()
+        return hashlib.sha256(open(path, "rb").read()).hexdigest()
     except OSError:
         return "missing"
 
 
 CODE_COMMIT = _git_commit()
-PARSER_VERSION = "2.1"  # strict same-sentence date binding + typed identities
-ANCHORS_SHA256 = _anchors_digest()
+PARSER_VERSION = "2.2"  # window model, assertion binding, channel-scope status
 
 
 def row(item, item_id, result, snapshot_utc, pool=None,
-        entity_type="asset"):
+        entity_type="asset", anchors_path=None):
     """snapshot_utc is REQUIRED and must come from the pool manifest
     (finished_utc of the walk that produced the pool). No wall-clock fallback:
     identical inputs must produce identical bytes (Astra #7 regression fix).
@@ -94,7 +107,7 @@ def row(item, item_id, result, snapshot_utc, pool=None,
         # evidence. A timestamp alone is not a snapshot identifier.
         "code_commit": CODE_COMMIT,
         "parser_version": PARSER_VERSION,
-        "anchors_sha256": ANCHORS_SHA256,
+        "anchors_sha256": anchors_digest(anchors_path),
     }
     if not snapshot_utc:
         base["status"] = "ABSTAIN"

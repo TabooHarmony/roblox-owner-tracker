@@ -11,9 +11,14 @@ import parse_wiki, bracket, validate, pool_manifest
 from estimate_schema import row as schema_row, dumps
 
 # Canonical eligible anchor: closed, paired count, count observed AT/after closure.
-def anchor(purchased, as_of="March 5, 2020", until="March 5, 2020"):
-    return {"purchased": purchased, "purchased_as_of": as_of,
-            "sale_state": "closed", "until": until}
+# Round-3 records carry the window model; parse_ok=True is part of the contract.
+def anchor(purchased, as_of="March 6, 2020", until="March 5, 2020", **over):
+    rec = {"purchased": purchased, "purchased_as_of": as_of,
+           "sale_state": "closed", "until": until,
+           "parse_ok": True, "purchase_count_scope": "single", "scope_status": "single",
+           "windows": [{"index": "1", "from": None, "until": until, "state": "resolved"}]}
+    rec.update(over)
+    return rec
 
 BASELINE_ANCHORS = {
     "1": anchor(20000), "3": anchor(3000),
@@ -78,10 +83,14 @@ class TestParserDateBinding(unittest.TestCase):
             self.assertEqual(r["sale_state"], "still_available", variant)
 
     def test_reopened_item_last_date_wins(self):
+        # Round-3: duplicate bare '| until =' lines are ambiguous edit residue;
+        # the window model only counts DISTINCT windows (until2, until3...).
+        # Last value wins for the close date; a note flags the duplicate.
         r = parse_wiki.parse("| until = June 12, 2012\n| until = March 5, 2020")
         self.assertEqual(r["sale_state"], "closed")
         self.assertEqual(r["until"], "March 5, 2020")
-        self.assertEqual(len(r["until_history"]), 2)
+        self.assertTrue(any("duplicate_until" in n for n in r.get("parse_notes", [])),
+                        r.get("parse_notes"))
 
     def test_paired_sentence_real_phrasing(self):
         r = parse_wiki.parse("As of January 1, 2020, it has been purchased 8,891 times and favorited 1,719 times.")
@@ -184,8 +193,8 @@ class TestEngine(unittest.TestCase):
         self.assertEqual(r["status"], "ABSTAIN")
 
     def test_unpaired_upper_abstains(self):
-        anchors = {"1": {"purchased": None, "unpaired_purchased": 20000,
-                         "sale_state": "closed", "until": "June 12, 2019"},
+        anchors = {"1": anchor(None, until="June 12, 2019",
+                               unpaired_purchased=20000),
                    "3": anchor(3000)}
         r = self._run(anchors)
         self.assertEqual(r["status"], "ABSTAIN")
@@ -193,11 +202,19 @@ class TestEngine(unittest.TestCase):
         self.assertIn("unpaired", bracket.anchor_eligible(anchors["1"])[1])
 
     def test_wide_bracket_low_confidence(self):
-        anchors = {"1": anchor(1000000, as_of="June 12, 2019", until="June 12, 2019"),
+        anchors = {"1": anchor(1000000, as_of="June 13, 2019", until="June 12, 2019"),
                    "3": anchor(1000)}
         r = self._run(anchors)
         self.assertEqual(r["status"], "ESTIMATE")
         self.assertEqual(r["confidence"], "LOW")
+
+    def test_same_day_observation_rejected(self):
+        # Round-3 boundary policy: observation equal to closure date cannot be
+        # ordered within the day; conservatively rejected as stale.
+        a1 = anchor(20000, as_of="March 5, 2020", until="March 5, 2020")
+        ok, why = bracket.anchor_eligible(a1)
+        self.assertFalse(ok)
+        self.assertIn("stale", why)
 
     def test_stale_count_rejected(self):
         anchors = {"1": anchor(20000, as_of="April 27, 2019", until="September 16, 2019"),
@@ -375,6 +392,142 @@ class TestPoolManifestStrictness(unittest.TestCase):
         del m["query"]["SortAggregation"]
         errs = pool_manifest.validate(m, ["1", "2", "3"])
         self.assertTrue(any("SortAggregation" in e for e in errs), errs)
+
+
+class TestRound3Regressions(unittest.TestCase):
+    """Astra round-3 HOLD counterexamples: each must stay impossible."""
+
+    def _w(self, until2):
+        pipe = chr(124)
+        wt = (f"{{Infobox item\n{pipe} id = 123\n{pipe} until = January 1, 2019\n"
+              f"{pipe} from2 = January 1, 2021\n{pipe} until2 = {until2}\n}}\n"
+              "As of January 1, 2022, it was purchased 100 times.")
+        return parse_wiki.parse(wt)
+
+    def test_unknown_until2_rejected(self):
+        r = self._w("Unknown")
+        self.assertFalse(bracket.anchor_eligible({**r,
+            "purchase_count_scope": "single", "scope_status": "single"})[0])
+
+    def test_blank_until2_unresolved(self):
+        r = self._w("")
+        self.assertTrue(any("unresolved" in n for n in r["parse_notes"]))
+
+    def test_impossible_until2_unresolved(self):
+        r = self._w("February 30, 2023")
+        self.assertTrue(any("unresolved_window_2" in n for n in r["parse_notes"]))
+
+    def test_template_until2_fails_closed(self):
+        pipe = chr(124)
+        wt = (f"{{Infobox item\n{pipe} id = 123\n{pipe} until = January 1, 2019\n"
+              f"{pipe} from2 = January 1, 2021\n{pipe} until2 = "
+              "{{Date" + chr(124) + "2023" + chr(124) + "1" + chr(124) + "1}}\n}}\n"
+              "As of January 1, 2022, it was purchased 100 times.")
+        r = parse_wiki.parse(wt)
+        self.assertIs(r["parse_ok"], False)
+
+    def test_corrupting_later_closure_cannot_illuminate(self):
+        # THE invariant (Astra round-3): removing/corrupting later evidence must
+        # never turn an ineligible anchor eligible.
+        pipe = chr(124)
+        nl = chr(10)
+        header = ("{{Infobox item" + nl + pipe + " id = 123" + nl + pipe +
+                  " until = January 1, 2019" + nl + pipe +
+                  " from2 = January 1, 2021" + nl)
+        footer = nl + "}}" + nl + "As of January 1, 2022, it was purchased 100 times."
+        full = parse_wiki.parse(header + pipe + " until2 = January 1, 2023" + footer)
+        broken = parse_wiki.parse(header + footer)
+        e_full = bracket.anchor_eligible({**full, "purchase_count_scope": "single",
+                                          "scope_status": "single"})[0]
+        e_broken = bracket.anchor_eligible({**broken, "purchase_count_scope": "single",
+                                            "scope_status": "single"})[0]
+        self.assertFalse(e_full)
+        self.assertFalse(e_broken)
+
+    def test_dual_channel_paraphrases_detected(self):
+        bold = "'" * 3
+        for phrase in ("marketplace or in [[The Hunt]]",
+                       "marketplace and in [[The Hunt]]",
+                       bold + "marketplace" + bold + " or in [[The Hunt]]",
+                       "marketplace" + chr(10) + "or in [[The Hunt]]",
+                       "catalog or avatar shop",
+                       "marketplace or in The Hunt",
+                       "in [[The Hunt]] or marketplace",
+                       "on the marketplace or in [[The Hunt]]"):
+            r = parse_wiki.parse("It was purchased " + phrase +
+                                 " 100 times as of March 1, 2022.")
+            self.assertIn(r.get("purchase_count_scope"), ("dual", "multi_marketplace"),
+                          phrase)
+
+    def test_other_item_sentence_not_dual(self):
+        r = parse_wiki.parse("Unlike [[Other Item]], it was not available on the "
+                             "marketplace. It was purchased 100 times as of March 1, 2022.")
+        self.assertNotEqual(r.get("purchase_count_scope"), "dual")
+
+    def test_same_day_observation_rejected(self):
+        ok, why = bracket.anchor_eligible(anchor(20000, as_of="March 5, 2020",
+                                                until="March 5, 2020"))
+        self.assertFalse(ok)
+        self.assertIn("stale", why)
+
+    def test_bundle_alias_cannot_shadow_asset(self):
+        anchors = {"asset:555": anchor(20000), "asset:556": anchor(3000),
+                   "asset:557": anchor(25000), "555": anchor(8000)}
+        r = bracket.rank_bracket(["557", "555", "556"], "555", anchors)
+        self.assertEqual(r["status"], "ESTIMATE")
+        self.assertEqual(r["bracket"], [3000, 25000])
+
+    def test_manifest_skipped_prefix_fails(self):
+        pages = [{"cursor": "SKIPPED", "next_cursor": "", "fetched_utc": "t",
+                  "count": 3, "raw_response_sha256": "x" * 64}]
+        m = pool_manifest.make_manifest({"Keyword": "k", "SortType": 2,
+                                         "SortAggregation": 5}, pages, "s", "f",
+                                        True, ["1", "2", "3"])
+        errs = pool_manifest.validate(m, ["1", "2", "3"])
+        self.assertTrue(any("initial request cursor" in e for e in errs), errs)
+
+    def test_manifest_null_count_fails(self):
+        pages = [{"cursor": "", "next_cursor": "", "fetched_utc": "t",
+                  "count": None, "raw_response_sha256": "x" * 64}]
+        m = pool_manifest.make_manifest({"Keyword": "k", "SortType": 2,
+                                         "SortAggregation": 5}, pages, "s", "f",
+                                        True, [])
+        errs = pool_manifest.validate(m, [])
+        self.assertTrue(any("count" in e for e in errs), errs)
+
+    def test_manifest_nonempty_terminal_cursor_fails(self):
+        pages = [{"cursor": "", "next_cursor": "c1", "fetched_utc": "t",
+                  "count": 3, "raw_response_sha256": "x" * 64}]
+        m = pool_manifest.make_manifest({"Keyword": "k", "SortType": 2,
+                                         "SortAggregation": 5}, pages, "s", "f",
+                                        True, ["1", "2", "3"])
+        errs = pool_manifest.validate(m, ["1", "2", "3"])
+        self.assertTrue(any("next_cursor" in e for e in errs), errs)
+
+    def test_validator_refuses_parse_ok_false(self):
+        rec = anchor(100)
+        rec["parse_ok"] = False
+        errs = []
+        validate.validate_anchor(rec, errs)
+        self.assertTrue(any("parse_ok" in e for e in errs), errs)
+
+    def test_validator_refuses_singleton_bracket(self):
+        errs = []
+        validate.validate_estimate({"schema": 2, "item": "x", "item_id": 5,
+            "snapshot_utc": "2026-09-09T00:00:00Z", "pool": "p",
+            "status": "ESTIMATE", "quantity": "q", "confidence": "LOW",
+            "code_commit": "a" * 40, "parser_version": "2.2",
+            "anchors_sha256": "b" * 64, "bracket": [15, 15],
+            "anchors": {"above": {"purchased": 20}, "below": {"purchased": 10}}}, errs)
+        self.assertTrue(any("singleton" in e for e in errs), errs)
+
+    def test_validator_requires_provenance(self):
+        errs = []
+        validate.validate_estimate({"schema": 2, "item": "x", "item_id": 5,
+            "snapshot_utc": "2026-09-09T00:00:00Z", "pool": "p",
+            "status": "ABSTAIN", "abstain_reason": "r", "quantity": "q",
+            "confidence": None, "bracket": None, "anchors": None}, errs)
+        self.assertTrue(any("code_commit" in e for e in errs), errs)
 
 
 class TestMergeSafety(unittest.TestCase):

@@ -26,6 +26,9 @@ SCHEMA_VERSIONS = {2}
 ESTIMATE_REQUIRED = {
     "schema": int, "item": str, "item_id": int, "snapshot_utc": str,
     "pool": str, "status": str, "quantity": str,
+    # provenance envelope fields are MANDATORY (round-3 finding 5C): a row
+    # without them cannot be replayed or attributed.
+    "code_commit": str, "parser_version": str, "anchors_sha256": str,
 }
 ESTIMATE_STATUS = {"ESTIMATE", "ABSTAIN"}
 CONFIDENCE_ENUM = {"LOW", "MEDIUM"}
@@ -66,6 +69,11 @@ def validate_anchor(rec, errors):
             errors.append(f"{where}: field {k} negative: {v!r}")
     if rec.get("sale_state") not in ANCHOR_STATES:
         errors.append(f"{where}: bad sale_state {rec.get('sale_state')!r}")
+    # parse_ok must be TRUE, not merely boolean (round-3 finding 1 integration):
+    # a record the parser flagged unresolved must never reach the shipped DB.
+    if rec.get("parse_ok") is not True:
+        errors.append(f"{where}: parse_ok is {rec.get('parse_ok')!r}; failed parses are "
+                      "refused, not shipped")
     until = rec.get("until")
     if until is not None and not DATE_RE.match(until):
         errors.append(f"{where}: until not a date: {until!r}")
@@ -129,6 +137,9 @@ def validate_estimate(rec, errors):
             errors.append(f"{where}: negative bracket endpoint {b!r}")
         elif b[0] > b[1]:
             errors.append(f"{where}: inverted bracket {b!r} (engine must abstain, not emit)")
+        elif b[0] == b[1]:
+            errors.append(f"{where}: singleton interval {b!r} implies exact knowledge; "
+                          "engine must abstain (SINGLETON_INTERVAL)")
         a = rec.get("anchors") or {}
         if not isinstance(a, dict) or not a:
             errors.append(f"{where}: ESTIMATE anchors missing/empty")

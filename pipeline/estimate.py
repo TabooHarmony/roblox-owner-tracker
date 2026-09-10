@@ -48,7 +48,8 @@ def estimate_target(name, tid, pool_rel, anchors):
         r = bracket.rank_bracket(ids, str(tid), anchors)
     # snapshot provenance comes from the manifest, not wall clock
     snap = blob["manifest"].get("finished_utc")
-    return row(name, tid, r, snapshot_utc=snap, pool=pool_rel)
+    return row(name, tid, r, snapshot_utc=snap, pool=pool_rel,
+               anchors_path=os.path.join(ROOT, "anchors", "anchors_harden.jsonl"))
 
 
 def main():

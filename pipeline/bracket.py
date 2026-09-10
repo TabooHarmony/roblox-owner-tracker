@@ -49,20 +49,50 @@ def anchor_eligible(rec):
 
     Eligible: sale_state == 'closed' with a validated until date >= MIN_CLOSED_YEAR,
     a PAIRED purchase count (purchased + purchased_as_of), where the observation
-    date is not earlier than the closure date. A count observed before closure is
-    not the final count (Astra #2): purchases keep accruing until `until`.
+    date is strictly AFTER the last closure date (Astra round-3 finding 1
+    boundary: equality does not establish intra-day ordering, so a conservative
+    day-level policy rejects obs == close).
     Unpaired counts are lower bounds of the anchor's own count; they must never
     serve as endpoints of a target bracket.
+
+    FINALITY IS ENFORCED CENTRALLY HERE (Astra round-3 finding 1): a record
+    that fails parsing, carries an unresolved/open later window, or has any
+    window-model inconsistency is rejected. Invariant: removing or corrupting
+    a later closure can never turn an ineligible anchor into an eligible one.
     """
+    # parse-quality gate at the eligibility boundary (was only structural before)
+    if rec.get("parse_ok") is False:
+        return False, f"parse not ok (False; notes: {rec.get('parse_notes', [])[:2]})"
+    if rec.get("parse_ok") is None and rec.get("parse_notes"):
+        return False, f"parse notes present but parse_ok unset: {rec.get('parse_notes', [])[:2]}"
+    # parse_ok=None with no notes: hand-built fixture record; tolerated here,
+    # the shipped-DB validator refuses parse_ok != True regardless.
     if rec.get("sale_state") != "closed":
         return False, f"not-closed-final ({rec.get('sale_state')})"
     if not rec.get("until"):
         return False, "no until date"
-    # Re-release guard (Gate-B cross-validation finding): until_history carries EVERY
-    # window close (until, until2, ...). A count must be observed after the LAST
-    # closure, not the first - mid-second-window counts are not final. Items whose
-    # final window closed pre-MIN_CLOSED_YEAR are rejected on the same basis.
-    history = rec.get("until_history") or [rec["until"]]
+    # Window MODEL (round-3): windows carry resolved/open/unknown states.
+    # Any non-resolved window makes finality unestablishable - the last
+    # parseable close is NOT proof the item never re-opened after it.
+    windows = rec.get("windows")
+    if windows is None:
+        # Hand-built fixture records without a window model: derive a resolved
+        # single window from until_history when the record asserts parse_ok=True.
+        # Parsed round-3 records always carry windows; legacy parsed records
+        # without windows remain ineligible (fail closed; re-parse instead of
+        # trusting a degraded history list).
+        if rec.get("parse_ok") is True:
+            uh = rec.get("until_history") or ([rec["until"]] if rec.get("until") else [])
+            if uh:
+                windows = [{"index": str(i + 1), "until": u, "state": "resolved"}
+                           for i, u in enumerate(uh)]
+        if windows is None:
+            return False, "no window model (pre-round-3 record; re-scrape required)"
+    for w in windows:
+        if w.get("state") != "resolved":
+            return False, (f"window {w.get('index')} unresolved/open "
+                           f"({w.get('state')}); finality not establishable")
+    history = [w["until"] for w in windows if w.get("until")]
     last_close = None
     for u in history:
         du = parse_until(u or "")
@@ -84,11 +114,16 @@ def anchor_eligible(rec):
     a = parse_until(rec.get("purchased_as_of") or "")
     if a is None:
         return False, f"unparseable purchased_as_of: {rec.get('purchased_as_of')}"
-    if a < last_close:
-        return False, (f"stale count: observed {rec['purchased_as_of']} before "
+    # STRICTLY after last close (round-3 boundary): same-day observation cannot
+    # be ordered relative to the closure within the day; conservative rejection.
+    if a <= last_close:
+        return False, (f"stale count: observed {rec['purchased_as_of']} not after "
                        f"last window close {last_close}; not the final count")
-    if any(str(n).startswith("multi_channel_sale") for n in rec.get("parse_notes") or []):
-        return False, "multi-channel sale: wiki count may cover one channel only"
+    # channel-scope STATUS (round-3): only explicit single-channel scope is
+    # trusted; dual AND unknown both fail closed.
+    if rec.get("purchase_count_scope") != "single":
+        return False, (f"purchase_count_scope={rec.get('purchase_count_scope')!r}: "
+                       "count channel coverage unproven; not trusted as anchor")
     return True, "ok"
 
 
@@ -101,28 +136,49 @@ def rank_bracket(pool, target_id, anchors_db):
     Returns a result dict. NEVER a point estimate."""
     pool = [str(x) for x in pool]
     target_id = str(target_id)
-    if target_id not in pool:
+    # Typed identity lookups ONLY (Astra round-3 finding 5A): untyped plain-ID
+    # aliases let a bundle with the same numeric id overwrite an asset anchor
+    # (reproduced: asset:555=20000 shadowed by bundle:555=8000, changing the
+    # emitted bracket). Pools are catalog walks (assets), so lookups use the
+    # asset namespace; bundle targets must be walked and estimated as bundles
+    # with an explicit bundle pool + typed target id.
+    t_typed = target_id if ":" in target_id else f"asset:{target_id}"
+    pool_typed = [x if ":" in x else f"asset:{x}" for x in pool]
+    # Normalize the anchors_db keys into the same typed namespace; plain keys
+    # are treated as asset ids (pools are catalog walks). An explicitly typed
+    # db key always wins over its plain alias (Astra 5A: wrong-entity overwrite).
+    db_typed = {}
+    for k, v in anchors_db.items():
+        if ":" in k:
+            db_typed[k] = v            # typed key: authoritative
+    for k, v in anchors_db.items():
+        if ":" not in k:
+            typed = f"asset:{k}"
+            if typed not in db_typed:  # never shadow an explicit typed record
+                db_typed[typed] = v
+    anchors_db = db_typed
+    if t_typed not in pool_typed:
         return {"status": "ABSTAIN", "reason": "TARGET_NOT_IN_POOL",
                 "detail": "target absent from this pool snapshot; re-walk required"}
     # Self-bracket guard (Astra 2.5): duplicate ids mean 'position' is ambiguous and
     # the same anchor can be found on both sides. Duplicate occurrences are server
     # drift evidence - abstain, do not pick an arbitrary occurrence.
-    if len(pool) != len(set(pool)):
+    if len(pool_typed) != len(set(pool_typed)):
         return {"status": "ABSTAIN", "reason": "DUPLICATE_POOL_IDS",
-                "detail": f"{len(pool) - len(set(pool))} duplicate id(s); ranking ambiguous"}
-    if pool.count(target_id) > 1:
+                "detail": f"{len(pool_typed) - len(set(pool_typed))} duplicate id(s); ranking ambiguous"}
+    if pool_typed.count(t_typed) > 1:
         return {"status": "ABSTAIN", "reason": "TARGET_DUPLICATED",
                 "detail": "target appears multiple times in pool"}
 
-    # collect eligible anchors above and below the target rank
-    ti = pool.index(target_id)
+    # collect eligible anchors above and below the target rank (typed keys only)
+    ti = pool_typed.index(t_typed)
     above = below = None
     for j in range(ti - 1, -1, -1):
-        a = anchors_db.get(str(pool[j]))
+        a = anchors_db.get(pool_typed[j])
         if a and anchor_eligible(a)[0]:
             above = (j, a); break
-    for j in range(ti + 1, len(pool)):
-        a = anchors_db.get(str(pool[j]))
+    for j in range(ti + 1, len(pool_typed)):
+        a = anchors_db.get(pool_typed[j])
         if a and anchor_eligible(a)[0]:
             below = (j, a); break
 
@@ -166,9 +222,9 @@ def rank_bracket(pool, target_id, anchors_db):
         "target_id": target_id,
         "rank_in_pool": ti,
         "anchors": {
-            "above": {"id": pool[ai], "rank": ai, "purchased": hi, "title": aa.get("title"),
+            "above": {"id": pool_typed[ai], "rank": ai, "purchased": hi, "title": aa.get("title"),
                       "until": aa.get("until"), "purchased_as_of": aa.get("purchased_as_of")},
-            "below": {"id": pool[bi], "rank": bi, "purchased": lo, "title": ab.get("title"),
+            "below": {"id": pool_typed[bi], "rank": bi, "purchased": lo, "title": ab.get("title"),
                       "until": ab.get("until"), "purchased_as_of": ab.get("purchased_as_of")},
         },
         "quantity": "cumulative_purchases_lower_bound_interval",

@@ -52,6 +52,11 @@ def validate(manifest, item_ids=None):
     if "sortaggregation" not in keys:
         errs.append("query missing SortAggregation (explicit aggregation semantics required; "
                     "do not rely on an undocumented default - Astra 1.2)")
+    # sort values must be present and non-null (round-3 5B: null sort accepted)
+    for label in ("sorttype", "sortaggregation"):
+        k = keys.get(label)
+        if k is not None and q[k] is None:
+            errs.append(f"query {k} is null: ordering semantics undefined")
     if not manifest.get("complete"):
         errs.append("incomplete walk")
     pages = manifest.get("pages", [])
@@ -64,6 +69,12 @@ def validate(manifest, item_ids=None):
     if manifest.get("complete") and pages:
         if not any(p.get("count") for p in pages):
             errs.append("pages present but all have count=0/missing")
+        # FIRST page must have been fetched with the EMPTY cursor (round-3 5B):
+        # a supplied initial Cursor skips a prefix of the ranking; the walk is
+        # then not the full ordering the manifest claims.
+        if pages[0].get("cursor") != "":
+            errs.append("page 0: initial request cursor is not empty "
+                        f"({pages[0].get('cursor')!r}); walk skipped a ranking prefix")
         # cursor chain must be faithful: page i+1's request cursor is page i's next_cursor
         for i in range(1, len(pages)):
             if pages[i].get("cursor") != pages[i - 1].get("next_cursor"):
@@ -74,6 +85,16 @@ def validate(manifest, item_ids=None):
             for k in ("cursor", "next_cursor", "fetched_utc", "count", "raw_response_sha256"):
                 if k not in p:
                     errs.append(f"page {i} missing {k}")
+            # count must be a real nonnegative int, never null/None (round-3 5B:
+            # a mocked errors-object page defaulted missing fields to empty and
+            # passed as successful exhaustion)
+            c = p.get("count")
+            if not isinstance(c, int) or isinstance(c, bool) or c < 0:
+                errs.append(f"page {i}: count must be a nonnegative integer, got {c!r}")
+    # terminal page must END the chain (round-3 5B: nonempty terminal cursor passed)
+    if manifest.get("complete") and pages and pages[-1].get("next_cursor"):
+        errs.append("complete=true but the last page still has a next_cursor "
+                    "(walk did not exhaust the ranking)")
     if manifest.get("n_items", 0) == 0:
         errs.append("manifest records zero items")
     if manifest.get("n_duplicate_ids", 0) > 0:

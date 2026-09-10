@@ -48,7 +48,7 @@ def main():
 
     out = row(f"id:{args.item_id}", args.item_id, result,
               snapshot_utc=manifest.get("finished_utc"), pool=args.pool,
-              entity_type=args.entity_type)
+              entity_type=args.entity_type, anchors_path=args.anchors)
     text = dumps(out, indent=1)
     if args.out:
         tmp = args.out + ".tmp"

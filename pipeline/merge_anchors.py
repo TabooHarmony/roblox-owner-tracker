@@ -42,7 +42,12 @@ def load(p):
 
 
 def main():
-    if len(sys.argv) >= 3:
+    # argv discipline (round-3 finding 5F): one arg = BASE-ONLY merge (no delta).
+    # The old code fell through to default paths, silently ignoring the caller's
+    # explicit base and merging whatever defaults existed.
+    if len(sys.argv) == 2:
+        base_path, delta_path = sys.argv[1], None
+    elif len(sys.argv) >= 3:
         base_path, delta_path = sys.argv[1], sys.argv[2]
     else:
         # repo-internal artifacts only; NO parent-directory fallback (undeclared input)
