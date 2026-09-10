@@ -27,17 +27,10 @@ refresh:
 	python3 pipeline/estimate.py
 	python3 pipeline/validate.py
 
-# Astra round-3 5D: artifact REPLAY, not consecutive-run stability.
-# Rebuilds estimates from declared evidence in a clean clone and diffs against
-# the shipped artifacts, ignoring only the self-referential code_commit field.
+# Astra round-3 5D / round-4 finding 4: artifact REPLAY, not consecutive-run
+# stability. Implemented as a fail-fast program (pipeline/verify_clean.py):
+# clean clone at HEAD, producers must succeed, output compared against the
+# COMMITTED estimates/estimates_v2.jsonl. Missing files, failed generation, and
+# altered committed artifacts each fail the gate.
 verify-clean:
-	tmp=$$(mktemp -d); \
-	git clone --quiet "$$(git -C . rev-parse --absolute-git-dir | xargs dirname)/.." $$tmp/repo; \
-	cd $$tmp/repo && git checkout --quiet $$(git -C $(CURDIR) rev-parse HEAD); \
-	python3 pipeline/estimate.py; \
-	python3 pipeline/validate.py; \
-	diff <(jq -c 'del(.code_commit)' $(CURDIR)/estimates_bracketed.jsonl | sort) \
-	     <(jq -c 'del(.code_commit)' estimates_bracketed.jsonl | sort) \
-	&& echo "REPLAY OK: byte-identical modulo code_commit" \
-	|| { echo "REPLAY FAILED"; exit 1; }; \
-	rm -rf $$tmp
+	python3 pipeline/verify_clean.py

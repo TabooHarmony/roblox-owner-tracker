@@ -8,7 +8,7 @@ Quantity estimated: cumulative purchases (sales), NOT unique owners. For
 limited-unique items these differ (resale churn) - such anchors are excluded
 when identifiable.
 """
-import json, re
+import json, os, re
 from datetime import date
 
 # Era rule: wiki purchase counts for pre-2012 closures come from a tiny user
@@ -44,6 +44,24 @@ def parse_until(s):
     return None
 
 
+_ERRONEOUS_TYPED_IDS = None
+
+def _erroneous_typed_ids():
+    """Round-4 finding 6: adjudicated-erroneous wiki values (committed file) are
+    refused at runtime, so ledger dispositions actually gate eligibility."""
+    global _ERRONEOUS_TYPED_IDS
+    if _ERRONEOUS_TYPED_IDS is None:
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "docs", "zero_sales_adjudications.json")
+        ids = set()
+        if os.path.exists(path):
+            with open(path) as f:
+                for k, v in json.load(f).get("adjudications", {}).items():
+                    if v.get("adjudication") == "wiki_value_erroneous":
+                        ids.add(k)
+        _ERRONEOUS_TYPED_IDS = ids
+    return _ERRONEOUS_TYPED_IDS
+
 def anchor_eligible(rec):
     """Closed-final anchor check. Returns (ok, reason).
 
@@ -63,6 +81,12 @@ def anchor_eligible(rec):
     # parse-quality gate at the eligibility boundary (was only structural before)
     if rec.get("parse_ok") is False:
         return False, f"parse not ok (False; notes: {rec.get('parse_notes', [])[:2]})"
+    # Round-4 finding 6: adjudicated-erroneous wiki values are refused at runtime
+    typed_key = ('bundle' if "entity_type:bundle" in (rec.get("parse_notes") or [])
+                 else 'asset') + f":{rec.get('item_id')}"
+    if typed_key in _erroneous_typed_ids():
+        return False, f"adjudicated_wiki_value_erroneous ({typed_key}: live economy " \
+                      f"API reports Sales=0; see docs/zero_sales_adjudications.json)"
     if rec.get("parse_ok") is None and rec.get("parse_notes"):
         return False, f"parse notes present but parse_ok unset: {rec.get('parse_notes', [])[:2]}"
     # parse_ok=None with no notes: hand-built fixture record; tolerated here,
@@ -76,18 +100,12 @@ def anchor_eligible(rec):
     # parseable close is NOT proof the item never re-opened after it.
     windows = rec.get("windows")
     if windows is None:
-        # Hand-built fixture records without a window model: derive a resolved
-        # single window from until_history when the record asserts parse_ok=True.
-        # Parsed round-3 records always carry windows; legacy parsed records
-        # without windows remain ineligible (fail closed; re-parse instead of
-        # trusting a degraded history list).
-        if rec.get("parse_ok") is True:
-            uh = rec.get("until_history") or ([rec["until"]] if rec.get("until") else [])
-            if uh:
-                windows = [{"index": str(i + 1), "until": u, "state": "resolved"}
-                           for i, u in enumerate(uh)]
-        if windows is None:
-            return False, "no window model (pre-round-3 record; re-scrape required)"
+        # Round-4 (Astra finding 2): NO production compatibility exception.
+        # A record without a window model has no finality evidence at all;
+        # synthesizing windows from until_history silently skipped unparseable
+        # entries ('Unknown') and reopened the round-2 hole. Fixtures must
+        # carry a real window model. Fail closed.
+        return False, "no window model (re-parse/re-scrape required)"
     for w in windows:
         if w.get("state") != "resolved":
             return False, (f"window {w.get('index')} unresolved/open "
@@ -136,26 +154,20 @@ def rank_bracket(pool, target_id, anchors_db):
     Returns a result dict. NEVER a point estimate."""
     pool = [str(x) for x in pool]
     target_id = str(target_id)
-    # Typed identity lookups ONLY (Astra round-3 finding 5A): untyped plain-ID
-    # aliases let a bundle with the same numeric id overwrite an asset anchor
-    # (reproduced: asset:555=20000 shadowed by bundle:555=8000, changing the
-    # emitted bracket). Pools are catalog walks (assets), so lookups use the
-    # asset namespace; bundle targets must be walked and estimated as bundles
-    # with an explicit bundle pool + typed target id.
+    # Typed identity lookups ONLY (Astra round-3 finding 5A, round-4 finding 3):
+    # untyped plain-ID aliases let a bundle with the same numeric id become
+    # asset evidence when no explicit asset record exists (reproduced round 4:
+    # bundle:556 alias produced ESTIMATE where typed-only abstains). Pools are
+    # catalog walks (assets), so lookups use the asset namespace; bundle targets
+    # must be walked and estimated as bundles with an explicit bundle pool +
+    # typed target id.
     t_typed = target_id if ":" in target_id else f"asset:{target_id}"
     pool_typed = [x if ":" in x else f"asset:{x}" for x in pool]
-    # Normalize the anchors_db keys into the same typed namespace; plain keys
-    # are treated as asset ids (pools are catalog walks). An explicitly typed
-    # db key always wins over its plain alias (Astra 5A: wrong-entity overwrite).
-    db_typed = {}
-    for k, v in anchors_db.items():
-        if ":" in k:
-            db_typed[k] = v            # typed key: authoritative
-    for k, v in anchors_db.items():
-        if ":" not in k:
-            typed = f"asset:{k}"
-            if typed not in db_typed:  # never shadow an explicit typed record
-                db_typed[typed] = v
+    # Normalize the anchors_db keys into the typed namespace. Plain keys are
+    # NOT promoted (round-4 finding 3): an untyped db key carries no entity
+    # type, so it can never be trusted as asset evidence. Typed keys pass
+    # through untouched.
+    db_typed = {k: v for k, v in anchors_db.items() if ":" in k}
     anchors_db = db_typed
     if t_typed not in pool_typed:
         return {"status": "ABSTAIN", "reason": "TARGET_NOT_IN_POOL",

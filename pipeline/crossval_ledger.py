@@ -22,6 +22,18 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline"))
 from bracket import anchor_eligible  # noqa: E402
+from parse_wiki import _validate_date  # noqa: E402  (round-4 finding 6: parsed dates)
+
+
+def _to_iso(canonical):
+    """Canonical 'Month D, YYYY' -> 'YYYY-MM-DD' for cutoff comparison."""
+    if not canonical:
+        return None
+    import datetime as _dt
+    try:
+        return _dt.datetime.strptime(canonical, "%B %d, %Y").date().isoformat()
+    except ValueError:
+        return None
 
 
 def sha256_file(path):
@@ -111,13 +123,30 @@ def main():
         # vintage is NOT assumed here; both dates travel in the ledger and the
         # comparable-window cutoff is an explicit CLI-injected constant, never
         # an undocumented guess.
+        # Round-4 finding 6: missing temporal provenance is comparability_UNKNOWN,
+        # never confirmed comparability; and dates are PARSED, not compared as
+        # strings (the old `as_of >= cutoff` excluded "2019-12-31" against a
+        # "2020-01-01" cutoff lexicographically).
         cutoff = os.environ.get("DUMP_VINTAGE_CUTOFF")  # e.g. "2023-01-01"
         as_of = rec.get("purchased_as_of") or ""
-        if cutoff and as_of and as_of >= cutoff:
+        as_of_iso = _to_iso(_validate_date(as_of)) if as_of else None
+        entry["wiki_as_of_iso"] = as_of_iso
+        if not cutoff:
+            entry["temporal_comparability"] = "unknown_cutoff_unset"
+        elif as_of_iso is None:
+            entry["temporal_comparability"] = "unknown_no_parseable_observation_date"
+            entry["disposition"] = "comparability_unknown"
+            flow["unresolved"] += 1
+            ledger.append(entry)
+            continue
+        elif as_of_iso >= cutoff:
+            entry["temporal_comparability"] = "after_cutoff"
             entry["disposition"] = "not_temporally_comparable"
             flow["unresolved"] += 1
             ledger.append(entry)
             continue
+        else:
+            entry["temporal_comparability"] = "comparable"
         flow["temporally_comparable"] += 1
         ok, why = anchor_eligible(rec)
         if not ok:

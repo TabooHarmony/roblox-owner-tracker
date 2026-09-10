@@ -69,13 +69,36 @@ def walk(query, keyword_for_log):
             p["Cursor"] = cursor
         status, raw = fetch(p)
         j = json.loads(raw)
+        # Round-4 finding 5b: validate response shape BEFORE deciding
+        # completion. An HTTP-200 body of {"errors":[...]} (absent data/
+        # nextPageCursor) previously became empty values and successful
+        # exhaustion.
+        if not isinstance(j, dict) or ("data" not in j and "errors" in j):
+            pages.append({
+                "request_cursor": cursor,
+                "cursor": cursor,
+                "next_cursor": "",
+                "fetched_utc": now_utc(),
+                "count": 0,
+                "http_status": status,
+                "response_errors": j.get("errors") if isinstance(j, dict) else None,
+                "raw_response_sha256": hashlib.sha256(raw).hexdigest(),
+            })
+            ok, reason = False, f"page {len(pages)} returned an errors object (HTTP {status}); not exhaustion"
+            break
         body = j.get("data") or []
         next_cursor = j.get("nextPageCursor") or ""
+        page_ids = [str(it.get("id")) for it in body if it.get("id") is not None]
         pages.append({
-            "cursor": cursor,      # request cursor ("" = first page)
+            "request_cursor": cursor,  # round-4 5a: the cursor actually sent
+            "cursor": cursor,          # ("" = first page)
             "next_cursor": next_cursor,
             "fetched_utc": now_utc(),
             "count": len(body),
+            "http_status": status,
+            # round-4 5c: digest binding ids to walk order, so reordering ids
+            # and refreshing only the aggregate digest is detectable
+            "page_ids_sha256": hashlib.sha256(json.dumps(page_ids).encode()).hexdigest(),
             "raw_response_sha256": hashlib.sha256(raw).hexdigest(),
         })
         for it in body:

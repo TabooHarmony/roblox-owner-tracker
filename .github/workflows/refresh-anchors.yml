@@ -33,7 +33,12 @@ jobs:
         run: python3 pipeline/walk_pools.py pools/walk_targets.json
 
       - name: Merge (provenance-checked, atomic)
-        run: python3 pipeline/merge_anchors.py anchors_harden_rescrape.jsonl anchors_delta_parsed.jsonl || python3 pipeline/merge_anchors.py anchors_harden_rescrape.jsonl
+        run: |
+          if [ -f anchors_delta_parsed.jsonl ]; then
+            python3 pipeline/merge_anchors.py anchors_harden_rescrape.jsonl anchors_delta_parsed.jsonl
+          else
+            python3 pipeline/merge_anchors.py anchors_harden_rescrape.jsonl
+          fi
 
       - name: Regenerate estimates (shared serializer)
         run: RELEASE_COMMIT=${{ github.sha }} python3 pipeline/estimate.py
@@ -44,16 +49,8 @@ jobs:
       - name: Tests
         run: make tests
 
-      - name: Artifact replay gate (round-3 finding 5D)
-        run: |
-          # REPLAY, not consecutive-run stability: rebuild the published
-          # estimates from declared evidence and diff against the artifacts
-          # this run is about to publish, ignoring only code_commit (the
-          # self-referential SHA cannot include itself; see docs/RELEASING.md).
-          cp estimates/estimates_v2.jsonl /tmp/published.jsonl
-          python3 pipeline/estimate.py
-          diff <(jq -c 'del(.code_commit)' /tmp/published.jsonl | sort) \
-               <(jq -c 'del(.code_commit)' estimates/estimates_v2.jsonl | sort)
+      - name: Artifact replay gate (round-4 finding 4)
+        run: python3 pipeline/verify_clean.py
 
       - name: Commit and push (atomic publication)
         run: |

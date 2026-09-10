@@ -27,12 +27,12 @@ def load_anchors():
     p = os.path.join(ROOT, "anchors", "anchors_harden.jsonl")
     for l in open(p):
         rec = json.loads(l)
-        # typed identity (Astra 2.2): bundle records key separately from assets
-        # so equal numeric ids cannot collide across namespaces.
+        # typed identity ONLY (Astra round-4 finding 3): no untyped plain-ID
+        # aliases. A bundle alias must never become asset evidence via key
+        # fallback; every lookup preserves the entity type.
         if rec.get("item_id"):
             et = "bundle" if "entity_type:bundle" in (rec.get("parse_notes") or []) else "asset"
             anchors[f"{et}:{rec['item_id']}"] = rec
-            anchors[str(rec["item_id"])] = rec  # unprefixed alias for asset lookups
     return anchors
 
 
@@ -63,9 +63,10 @@ def run(anchors_path=None, pools=None, out_path=None):
         anchors = {}
         for l in open(anchors_path):
             rec = json.loads(l)
+            # typed identity ONLY (Astra round-4 finding 3): no untyped
+            # plain-ID aliases; entity type must survive every lookup.
             et = rec.get("entity_type", "asset")
             anchors[f"{et}:{rec['item_id']}"] = rec
-            anchors[str(rec["item_id"])] = rec  # display-compat alias
     pool_files = pools or [p for _, p in sorted(TARGETS.items())]
     out = []
     for pf in pool_files:

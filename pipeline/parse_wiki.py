@@ -53,8 +53,9 @@ RE_CHANNEL_EXPERIENCE = re.compile(
     r"\b(?:in|during|for)\s+(?:the\s+)?(?:experience|game|event|"
     r"\[\[[^\]]+\]\]|[A-Z][A-Za-z0-9_'!]+(?:\s+[A-Z][A-Za-z0-9_'!]+)*)\b")
 RE_AVAILABILITY = re.compile(
-    r"\b(?:was|is|are|became|available|purchasable|sold|obtainable|"
-    r"purchased|could\s+be\s+(?:bought|purchased|obtained))\b", re.I)
+    r"\b(?:was|is|are|became|available|purchasable|sold|obtainable|obtained|"
+    r"purchased|could\s+(?:also\s+)?be\s+(?:bought|purchased|obtained))\b",
+    re.I)
 RE_NEGATED = re.compile(
     r"\b(?:no longer|not|never|cannot|can't|removed from|unavailable)\b", re.I)
 RE_PAGE_SUBJECT = re.compile(r"'''([^']+)'''")
@@ -69,21 +70,35 @@ def _page_subject(wt):
 def _channel_scope(wt_norm, subject=None):
     """Channel-scope STATUS about THIS item, from normalized sentences.
 
-    dual:    an affirmative statement about this item naming both a
-             marketplace-family channel and an experience -> wiki count may
+    dual:    affirmative statements about this item, taken TOGETHER, name both
+             a marketplace-family channel and an experience -> wiki count may
              cover one channel only. Dual DOMINATES: any dual sentence wins
              over single evidence elsewhere (safety-critical direction).
-    single:  an affirmative statement about this item naming only a
-             marketplace-family channel, with no dual statement anywhere.
+    single:  an affirmative statement about this item that (a) names a
+             marketplace-family channel and (b) carries a sale/availability
+             assertion in the same sentence, with no dual evidence anywhere.
     unknown: no affirmative channel statement about this item. NOT trusted
              single - absence of a phrase is not evidence of one channel.
+
+    Round-4 (Astra finding 1) hard invariants:
+      - Category/link metadata ([[Category:Catalog items]], bare 'Catalog',
+        [[Catalog:X]] nav links) is NEVER channel evidence. normalize_markup
+        strips those namespaces; this function additionally refuses to count a
+        marketplace token in a sentence that has no sale/availability verb
+        (a bare mention is metadata, not a coverage statement).
+      - Channel statements COMBINE across sentences: 'purchased on the
+        marketplace' + a separate 'obtainable in The Hunt' sentence is dual,
+        not single. Availability-only marketplace sentences also accumulate.
+      - Count coverage (a paired purchase assertion) stays distinct from mere
+        availability; both feed scope, neither is subordinate to the other.
 
     Sentences with negated availability are never affirmative evidence, and
     sentences whose subject is a different named item are skipped (Astra
     round-3 finding 3 false positives).
     """
     subj = subject or _page_subject(wt_norm)
-    saw_single = None
+    saw_market = None    # first affirmative marketplace mention w/ sale verb
+    saw_exp = None       # first affirmative experience mention w/ sale verb
     for sent in re.split(r"[.;:\n]", wt_norm):
         sent = sent.strip()
         if not sent:
@@ -107,9 +122,20 @@ def _channel_scope(wt_norm, subject=None):
             return "dual", f"multi-marketplace channels: {sorted(m_kinds)}"
         if has_m and has_e:
             return "dual", f"{has_m[0]} + {has_e.group(0)}"
-        if has_m and saw_single is None:
-            saw_single = ("single", has_m[0])
-    return saw_single or ("unknown", None)
+        # a marketplace/experience token only becomes trusted evidence when the
+        # sentence asserts sale/availability of this item; a bare category or
+        # nav mention carries no coverage information (round-4 finding 1)
+        if not RE_AVAILABILITY.search(sent):
+            continue
+        if has_m and saw_market is None:
+            saw_market = has_m[0]
+        if has_e and saw_exp is None:
+            saw_exp = has_e.group(0)
+    if saw_market and saw_exp:
+        return "dual", f"{saw_market} + {saw_exp} (separate sentences)"
+    if saw_market:
+        return "single", saw_market
+    return "unknown", None
 
 
 def strip_comments(wt):
@@ -119,10 +145,22 @@ def strip_comments(wt):
 def normalize_markup(wt):
     """Flatten links, bold/italic, templates-in-prose, and whitespace so the
     channel detector cannot be bypassed by [[The Hunt]], '''marketplace''',
-    or a newline inside the phrase (Astra round-3 finding 3)."""
-    t = re.sub(r"\[\[(?:[^\|\]]*\|)?([^\]]+)\]\]", r"\1", wt)   # [[a|b]]->b, [[a]]->a
+    or a newline inside the phrase (Astra round-3 finding 3).
+
+    Round-4 (Astra 4.1 finding 1): Category/Catalog-NAMESPACE links are pure
+    metadata/navigation - they are REMOVED before the general flatten so they
+    can never contribute a marketplace-family token. Merely adding
+    [[Category:Catalog items]] must never promote unknown count coverage into
+    trusted single-channel coverage."""
+    t = re.sub(r"\[\[\s*[Cc]ategory\s*:[^\]]*\]\]", " ", wt)   # [[Category:x]]: metadata
+    t = re.sub(r"\[\[\s*[Cc]atalog\s*:[^\]]*\]\]", " ", t)     # [[Catalog:x]]: nav link
+    t = re.sub(r"\[\[(?:[^\|\]]*\|)?([^\]]+)\]\]", r"\1", t)   # [[a|b]]->b, [[a]]->a
     t = re.sub(r"'+", "", t)                                    # '''bold'''/''ital''
     t = re.sub(r"<!--.*?-->", "", t, flags=re.S)
+    # flattened category/catalog namespace remnants (e.g. 'Category:Catalog items'
+    # left by a non-wiki-link mention) must not read as a channel token either
+    t = re.sub(r"\b[Cc]ategory\s*:\S+", " ", t)
+    t = re.sub(r"\b[Cc]atalog\s*:\S+", " ", t)
     t = re.sub(r"\s+", " ", t)
     return t
 
@@ -192,16 +230,29 @@ def extract_windows(scope):
             w["from"] = val or None
         else:
             if w.get("until_raw") is not None:
-                w["dup_until"] = True
+                if (w["until_raw"] or "") != (val or ""):
+                    w["dup_until"] = True   # conflicting values: contradiction
+                else:
+                    w["dup_until_same"] = True  # harmless edit residue: note only
             w["until_raw"] = val
             w["until"] = val or None
 
     notes = []
+    contradictions = []   # round-4 finding 2: contradictions INVALIDATE, not note
     out = []
     for num in sorted(windows, key=lambda x: (len(x), x)):
         w = windows[num]
         if w.pop("dup_until", False):
-            notes.append(f"duplicate_until_window_{num}:ambiguous edit history; last value kept")
+            # round-4 finding 2: two conflicting closures for the same window.
+            # Order of fields must not decide which is trusted; the evidence is
+            # contradictory -> the window is unresolved evidence, page fails.
+            contradictions.append(
+                f"contradictory_window_{num}:duplicate until field with different values")
+        if w.pop("dup_until_same", False):
+            notes.append(f"duplicate_until_window_{num}:identical values (edit residue)")
+        if w.pop("dup_from", False):
+            contradictions.append(
+                f"contradictory_window_{num}:duplicate from field with different values")
         u = (w.get("until") or "").strip()
         f = (w.get("from") or "").strip()
         if not u:
@@ -229,15 +280,26 @@ def extract_windows(scope):
                 else:
                     w["state"] = "unknown"
                     notes.append(f"unresolved_window_{num}:{u!r}")
-        if f and _validate_date(f) is None and f.lower() not in ("unknown", ""):
+        fc = _validate_date(f) if f else None
+        if f and fc is None and f.lower() not in ("unknown", ""):
+            # round-4 finding 2: an impossible opening (February 30) is
+            # UNRESOLVED EVIDENCE, not a discarded note. The window cannot be
+            # resolved while its opening is impossible.
+            w["state"] = "unknown"
             notes.append(f"unresolved_from_{num}:{f!r}")
+        if fc and w.get("state") == "resolved" and fc >= _validate_date(w["until"]):
+            # round-4 finding 2: opening on/after its own closing: the window
+            # evidence is self-contradictory. Never trust either endpoint.
+            w["state"] = "unknown"
+            contradictions.append(
+                f"contradictory_window_{num}:opening {f} is not before closing {w['until']}")
         out.append(w)
-    return out, notes
+    return out, notes, contradictions
 
 
 def _bind_purchase(wt):
     """Assertion-level binding. Returns (purchased, purchased_as_of,
-    unpaired_purchased, notes).
+    unpaired_purchased, notes, contradictions).
 
     Per sentence: collect purchase assertions and as-of dates.
     - sentence with EXACTLY one purchase and one date and no favorites
@@ -246,10 +308,17 @@ def _bind_purchase(wt):
       honestly, no invented date).
     - ambiguous sentence (multiple purchases or dates) -> rejected entirely:
       recorded as unpaired with an ambiguity note, never first-match.
+
+    Round-4 (Astra finding 2): two PAIRED observations that disagree are a
+    CONTRADICTION, not a first-match-wins choice. The binder records which
+    observations conflict and reports it via `contradictions`; parse() fails
+    the record closed. Sentence order never decides trust.
     """
     notes = []
+    contradictions = []
     paired = None
     unpaired = None
+    bare_counts = []   # '\d+ times' continuations with no verb/date
     for sent in split_sentences(wt):
         # clause split: 'As of DATE, it was purchased N times and favorited M
         # times' is one sentence whose first clause carries the as-of date.
@@ -258,10 +327,18 @@ def _bind_purchase(wt):
         clauses = [c.strip() for c in re.split(r"\s+and\s+", sent) if c.strip()]
         clause_pairs = []
         clause_unpaired = []
+        bare_counts = []   # '\d+ times' continuations with no verb/date
         for clause in clauses:
             purchases = RE_PURCHASE.findall(clause)
             dates = RE_ASOF.findall(clause)
             if not purchases:
+                # bare continuation count ('..., and 200 times before that'):
+                # a number+times with no purchase verb and no date. On its own
+                # it binds nothing, but sharing a sentence with a paired count
+                # it creates coverage ambiguity (round-4 finding 2).
+                bare = re.search(r"\b([\d,]+)\s+times\b", clause)
+                if bare and not dates:
+                    bare_counts.append(int(bare.group(1).replace(",", "")))
                 continue
             if RE_FAVORITED.search(clause):
                 notes.append("purchase_in_favorites_clause:not paired")
@@ -276,18 +353,41 @@ def _bind_purchase(wt):
         if len(clause_pairs) == 1:
             if paired is None:
                 paired = clause_pairs[0]
-            else:
-                notes.append("ambiguous_pairing:multiple paired clauses; kept first")
+            elif clause_pairs[0] != paired:
+                # round-4 finding 2: disagreeing paired observations (e.g. two
+                # as-of counts that don't fit one monotone history) are
+                # unresolved contradictions; the record must not ship either.
+                contradictions.append(
+                    f"contradictory_purchase_observations:{paired} vs {clause_pairs[0]}")
+            # equal duplicate restatement of the same observation: harmless
         elif len(clause_pairs) > 1:
-            notes.append(f"ambiguous_sentence:{len(clause_pairs)} paired clauses; rejected")
+            uniq = set(clause_pairs)
+            if len(uniq) > 1:
+                contradictions.append(
+                    f"contradictory_purchase_observations:{sorted(uniq)} in one sentence")
+            else:
+                notes.append(f"duplicate_purchase_observation:{clause_pairs[0]}")
         if clause_unpaired and paired is None and not clause_pairs:
             if unpaired is None:
                 unpaired = clause_unpaired[0]
     if paired and unpaired is not None:
         # a paired assertion supersedes unpaired counts in other sentences
         unpaired = None
-    return (paired[0], paired[1], unpaired, notes) if paired else \
-           (None, None, unpaired, notes)
+    # round-4 finding 2: an unpaired count inside a sentence that ALSO carries a
+    # paired observation ('100 times as of D1, and 200 times before that') is a
+    # binding contradiction: the two counts cannot both describe the item's
+    # displayed total, and the undated one cannot be positionally ordered.
+    if paired and unpaired is not None:
+        contradictions.append(
+            f"contradictory_purchase_binding:{paired[0]} paired with date vs "
+            f"{unpaired} undated in same context")
+        unpaired = None
+    if paired and bare_counts:
+        contradictions.append(
+            f"contradictory_purchase_binding:{paired[0]} paired with date vs "
+            f"undated bare count(s) {bare_counts} in same sentence")
+    return (paired + (unpaired, notes, contradictions) if paired else
+            (None, None, unpaired, notes, contradictions))
 
 
 def parse(wt):
@@ -309,8 +409,9 @@ def parse(wt):
         else:
             notes.append("no_infobox_span_found") if not box else None
 
-    windows, wnotes = extract_windows(wt)  # whole page: windows live in
+    windows, wnotes, wcontras = extract_windows(wt)  # whole page: windows live in
     notes.extend(wnotes)                   # {{Availability history}}, not the infobox
+    contradictions = list(wcontras)
 
     still = any(w["state"] == "open" for w in windows) or \
         (not windows and bool(RE_STILL.search(scope)))
@@ -359,9 +460,20 @@ def parse(wt):
         rec["parse_notes"].append(
             "multi_channel_sale:wiki count may cover one channel only")
 
-    pc, pa, up, pnotes = _bind_purchase(wt)
+    pc, pa, up, pnotes, pcontras = _bind_purchase(wt)
     rec["purchased"], rec["purchased_as_of"], rec["unpaired_purchased"] = pc, pa, up
     notes.extend(pnotes)
+    contradictions.extend(pcontras)
+
+    # Round-4 finding 2: contradictory evidence is RECORDED and ENFORCED. A
+    # contradiction (duplicate differing window fields, opening after closing,
+    # conflicting paired purchase observations) means the page cannot decide
+    # which evidence to trust -> parse_ok=False, fail closed downstream.
+    # Informational notes without conflict stay notes.
+    rec["contradictions"] = contradictions
+    if contradictions:
+        rec["parse_ok"] = False
+        notes.extend(contradictions)
 
     f = re.search(r"As of (" + DATE + r")[^.]*(?:been |was )?favorited ([\d,]+) times",
                   wt, re.I)

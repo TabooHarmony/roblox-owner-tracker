@@ -1,0 +1,22 @@
+{
+  "adjudications": {
+    "asset:335079769": {
+      "adjudicated_utc": "2026-09-09",
+      "adjudication": "wiki_value_erroneous",
+      "adjudicator": "hermes (human-directed live-API check, session 20260909_201206)",
+      "dump_sales": 0,
+      "evidence": "live EconomyAPI v1 assets/335079769/resale-data + game-badge cross-check reports Sales=0 on 2026-09-09; wiki infobox count (111,369) is unsupported by any current economy endpoint",
+      "wiki_count": 111369
+    },
+    "asset:430064025": {
+      "adjudicated_utc": "2026-09-09",
+      "adjudication": "wiki_value_erroneous",
+      "adjudicator": "hermes (human-directed live-API check, session 20260909_201206)",
+      "dump_sales": 0,
+      "evidence": "live EconomyAPI v1 assets/430064025/resale-data reports Sales=0 on 2026-09-09; wiki infobox count (43) is unsupported",
+      "wiki_count": 43
+    }
+  },
+  "policy": "adjudicated wiki_value_erroneous items are REFUSED as anchors at runtime (merge gate refuses on re-merge; estimator refuses typed ids listed here)",
+  "schema_version": 1
+}

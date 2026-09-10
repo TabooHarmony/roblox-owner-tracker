@@ -20,11 +20,11 @@ def load_anchors(path):
             r = json.loads(l)
         except Exception:
             continue  # malformed line: skip here; the merge gate is the enforcer
-        # typed identity, matching the batch loader (Astra 2.2)
+        # typed identity ONLY (Astra round-4 finding 3): no untyped plain-ID
+        # aliases; a bundle record must never become asset evidence.
         if r.get("item_id"):
             et = "bundle" if "entity_type:bundle" in (r.get("parse_notes") or []) else "asset"
             anchors[f"{et}:{r['item_id']}"] = r
-            anchors[str(r["item_id"])] = r
     return anchors
 
 

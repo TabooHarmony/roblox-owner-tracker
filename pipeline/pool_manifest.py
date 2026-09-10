@@ -106,4 +106,51 @@ def validate(manifest, item_ids=None):
         actual = hashlib.sha256(json.dumps([str(x) for x in item_ids]).encode()).hexdigest()
         if manifest.get("item_ids_sha256") != actual:
             errs.append("item_ids_sha256 does not match stored pool ids (substituted/edited list)")
+    # Round-4 finding 5a: a walk that started with a SUPPLIED cursor skips a
+    # ranking prefix. The walker must record the cursor it ACTUALLY sent for
+    # page 0 (request_cursor) separately from any echoed response cursor; a
+    # manifest claiming cursor="" without that evidence is rejected.
+    if manifest.get("complete") and pages:
+        for i, p in enumerate(pages):
+            if "request_cursor" not in p:
+                errs.append(f"page {i} missing request_cursor (the cursor actually "
+                            f"sent for this request; without it a skipped ranking "
+                            f"prefix is undetectable)")
+            elif i == 0 and p["request_cursor"] not in ("", None):
+                errs.append(f"page 0 request_cursor={p['request_cursor']!r}: "
+                            f"walk started mid-ranking (supplied initial cursor)")
+    # Round-4 finding 5b: completion requires positive evidence. A page whose
+    # HTTP body was an errors object ({"errors":[...]}) is NOT successful
+    # exhaustion; treat recorded error bodies as walk failure.
+        for i, p in enumerate(pages):
+            if p.get("response_errors") or p.get("http_status") not in (None, 200):
+                errs.append(f"page {i}: page not successfully fetched "
+                            f"(response_errors={p.get('response_errors')!r}, "
+                            f"http_status={p.get('http_status')!r}); walk did not "
+                            f"exhaust the ranking successfully")
+    # Round-4 finding 5c: page hashes must bind to reconstructable response
+    # content. Each page stores response_sha256 over its canonical id list;
+    # reordering ids and refreshing only the aggregate digest must fail.
+    if item_ids is not None and manifest.get("complete") and pages:
+        # ids are appended in walk order; verify per-page id-count consistency
+        # and that per-page digests exist and are checked by the walker's
+        # rehash step (raw_response_sha256 alone is unbound).
+        pos = 0
+        for i, p in enumerate(pages):
+            n = p.get("count") or 0
+            if not isinstance(n, int) or n < 0:
+                break
+            if "page_ids_sha256" not in p:
+                errs.append(f"page {i} missing page_ids_sha256 (per-page digest "
+                            f"binding ids to walk order; aggregate digest alone "
+                            f"cannot detect reordering)")
+            else:
+                seg = [str(x) for x in item_ids[pos:pos + n]]
+                seg_digest = hashlib.sha256(json.dumps(seg).encode()).hexdigest()
+                if seg_digest != p["page_ids_sha256"]:
+                    errs.append(f"page {i} page_ids_sha256 does not match the ids "
+                                f"it claims to cover (ids reordered/edited after walk)")
+            pos += n
+        if pos != len(item_ids):
+            errs.append(f"page counts sum to {pos} but pool holds {len(item_ids)} ids")
     return errs

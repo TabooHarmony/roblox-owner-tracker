@@ -21,7 +21,7 @@ def anchor(purchased, as_of="March 6, 2020", until="March 5, 2020", **over):
     return rec
 
 BASELINE_ANCHORS = {
-    "1": anchor(20000), "3": anchor(3000),
+    "asset:1": anchor(20000), "asset:3": anchor(3000),
 }
 BASELINE = bracket.rank_bracket(["1", "2", "3"], "2", BASELINE_ANCHORS)
 assert BASELINE["status"] == "ESTIMATE" and BASELINE["bracket"] == [3000, 20000], BASELINE
@@ -82,15 +82,20 @@ class TestParserDateBinding(unittest.TestCase):
             r = parse_wiki.parse("| until = " + variant)
             self.assertEqual(r["sale_state"], "still_available", variant)
 
-    def test_reopened_item_last_date_wins(self):
-        # Round-3: duplicate bare '| until =' lines are ambiguous edit residue;
-        # the window model only counts DISTINCT windows (until2, until3...).
-        # Last value wins for the close date; a note flags the duplicate.
+    def test_reopened_item_contradiction_refuses(self):
+        # Round-4 finding 2: duplicate bare '| until =' lines with DIFFERENT
+        # values are contradictory edit residue; recording a note is not
+        # finality. The window model must mark the contradiction and the
+        # record must become ineligible (order of fields must not decide).
         r = parse_wiki.parse("| until = June 12, 2012\n| until = March 5, 2020")
-        self.assertEqual(r["sale_state"], "closed")
-        self.assertEqual(r["until"], "March 5, 2020")
-        self.assertTrue(any("duplicate_until" in n for n in r.get("parse_notes", [])),
+        self.assertFalse(r["parse_ok"], r)
+        self.assertTrue(any("contradictory_window" in n for n in r.get("parse_notes", [])),
                         r.get("parse_notes"))
+        # same values duplicated is harmless residue, still fine:
+        r2 = parse_wiki.parse("| until = March 5, 2020\n| until = March 5, 2020")
+        self.assertEqual(r2["sale_state"], "closed")
+        self.assertTrue(any("duplicate_until" in n for n in r2.get("parse_notes", [])),
+                        r2.get("parse_notes"))
 
     def test_paired_sentence_real_phrasing(self):
         r = parse_wiki.parse("As of January 1, 2020, it has been purchased 8,891 times and favorited 1,719 times.")
@@ -143,7 +148,7 @@ class TestEngine(unittest.TestCase):
         self.assertEqual(r["reason"], "NO_ELIGIBLE_ANCHOR_ABOVE_AND_BELOW")
 
     def test_target_missing_abstains(self):
-        r = bracket.rank_bracket(["1"], "9", {"1": anchor(5)})
+        r = bracket.rank_bracket(["1"], "9", {"asset:1": anchor(5)})
         self.assertEqual(r["status"], "ABSTAIN")
         self.assertEqual(r["reason"], "TARGET_NOT_IN_POOL")
 
@@ -157,14 +162,14 @@ class TestEngine(unittest.TestCase):
     def test_inverted_endpoints_abstain(self):
         # REGRESSION FIXTURE (Astra 2.6a): upper-rank count < lower-rank count
         # must ABSTAIN, never emit a backwards interval.
-        anchors = {"1": anchor(100), "3": anchor(200)}
+        anchors = {"asset:1": anchor(100), "asset:3": anchor(200)}
         r = self._run(anchors)
         self.assertEqual(r["status"], "ABSTAIN")
         self.assertEqual(r["reason"], "ANCHOR_INVERSION")
 
     def test_singleton_interval_abstains(self):
         # REGRESSION FIXTURE (Astra 2.6b): [100,100] implies exact knowledge.
-        anchors = {"1": anchor(100), "3": anchor(100)}
+        anchors = {"asset:1": anchor(100), "asset:3": anchor(100)}
         r = self._run(anchors)
         self.assertEqual(r["status"], "ABSTAIN")
         self.assertEqual(r["reason"], "SINGLETON_INTERVAL")
@@ -180,30 +185,30 @@ class TestEngine(unittest.TestCase):
         self.assertFalse(ok, why)
 
     def test_pre2012_anchor_rejected(self):
-        anchors = {"1": anchor(50000, until="June 12, 2011", as_of="June 12, 2011"),
-                   "3": anchor(3000)}
+        anchors = {"asset:1": anchor(50000, until="June 12, 2011", as_of="June 12, 2011"),
+                   "asset:3": anchor(3000)}
         r = self._run(anchors)
         self.assertEqual(r["status"], "ABSTAIN")  # no eligible anchor above
 
     def test_still_available_anchor_rejected(self):
         anchors = {"1": {"purchased": 50000, "sale_state": "still_available",
                          "until": "Still available"},
-                   "3": anchor(3000)}
+                   "asset:3": anchor(3000)}
         r = self._run(anchors)
         self.assertEqual(r["status"], "ABSTAIN")
 
     def test_unpaired_upper_abstains(self):
-        anchors = {"1": anchor(None, until="June 12, 2019",
+        anchors = {"asset:1": anchor(None, until="June 12, 2019",
                                unpaired_purchased=20000),
-                   "3": anchor(3000)}
+                   "asset:3": anchor(3000)}
         r = self._run(anchors)
         self.assertEqual(r["status"], "ABSTAIN")
         self.assertEqual(r["reason"], "NO_ELIGIBLE_ANCHOR_ABOVE")
-        self.assertIn("unpaired", bracket.anchor_eligible(anchors["1"])[1])
+        self.assertIn("unpaired", bracket.anchor_eligible(anchors["asset:1"])[1])
 
     def test_wide_bracket_low_confidence(self):
-        anchors = {"1": anchor(1000000, as_of="June 13, 2019", until="June 12, 2019"),
-                   "3": anchor(1000)}
+        anchors = {"asset:1": anchor(1000000, as_of="June 13, 2019", until="June 12, 2019"),
+                   "asset:3": anchor(1000)}
         r = self._run(anchors)
         self.assertEqual(r["status"], "ESTIMATE")
         self.assertEqual(r["confidence"], "LOW")
@@ -217,9 +222,9 @@ class TestEngine(unittest.TestCase):
         self.assertIn("stale", why)
 
     def test_stale_count_rejected(self):
-        anchors = {"1": anchor(20000, as_of="April 27, 2019", until="September 16, 2019"),
-                   "3": anchor(3000)}
-        ok, why = bracket.anchor_eligible(anchors["1"])
+        anchors = {"asset:1": anchor(20000, as_of="April 27, 2019", until="September 16, 2019"),
+                   "asset:3": anchor(3000)}
+        ok, why = bracket.anchor_eligible(anchors["asset:1"])
         self.assertFalse(ok)
         self.assertIn("stale", why)
 
@@ -276,7 +281,7 @@ class TestRealEntryPoints(unittest.TestCase):
     row labels/formatting between batch and CLI are legitimate)."""
 
     def _fixture_repo(self, tmp):
-        import json as J, os, shutil
+        import json as J, os, shutil, hashlib
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         anchors = os.path.join(tmp, "anchors_harden.jsonl")
         with open(anchors, "w") as f:
@@ -285,16 +290,27 @@ class TestRealEntryPoints(unittest.TestCase):
                 rec["item_id"] = int(k.split(":")[-1])
                 rec["entity_type"] = "asset"
                 f.write(J.dumps(rec) + "\n")
-        pool = {"item_ids": ["1", "2", "3"],
-                "manifest": {"query": {"Keyword": "k", "SortType": 2,
-                             "SortAggregation": 5, "salesTypeFilter": 1,
-                             "includeNotForSale": True},
-                             "pages": [{"cursor": "", "next_cursor": "",
-                                        "fetched_utc": "2026-09-09T00:00:00Z",
-                                        "count": 3,
-                                        "raw_response_sha256": "x" * 64}],
+        # Round-4 finding 7: the fixture manifest must be a VALID pool (full
+        # required fields), so each entry point is proven on the SUCCESS path -
+        # comparing two INVALID_POOL abstentions proves nothing.
+        ids = ["1", "2", "3"]
+        pool = {"item_ids": ids,
+                "manifest": {"manifest_version": 2, "complete": True,
+                             "started_utc": "2026-09-09T00:00:00Z",
                              "finished_utc": "2026-09-09T00:00:00Z",
-                             "complete": True}}
+                             "n_items": 3, "n_duplicate_ids": 0,
+                             "item_ids_sha256": hashlib.sha256(
+                                 J.dumps(ids).encode()).hexdigest(),
+                             "query": {"Keyword": "k", "SortType": 2,
+                                       "SortAggregation": 5, "salesTypeFilter": 1,
+                                       "includeNotForSale": True},
+                             "pages": [{"request_cursor": "", "cursor": "",
+                                        "next_cursor": "",
+                                        "fetched_utc": "2026-09-09T00:00:00Z",
+                                        "count": 3, "http_status": 200,
+                                        "page_ids_sha256": hashlib.sha256(
+                                            J.dumps(ids).encode()).hexdigest(),
+                                        "raw_response_sha256": "x" * 64}]}}
         pf = os.path.join(tmp, "pool.json")
         J.dump(pool, open(pf, "w"))
         return root, anchors, pf
@@ -313,6 +329,13 @@ class TestRealEntryPoints(unittest.TestCase):
             self.assertTrue(r_cli.stdout.strip(),
                             "CLI produced no stdout: " + r_cli.stderr[-300:])
             cli = J.loads(r_cli.stdout[r_cli.stdout.index("{"):])
+            # Round-4 finding 7: SUCCESS required from EACH path independently,
+            # before any comparison. An equal abstention is a failed test.
+            self.assertEqual(cli["status"], "ESTIMATE",
+                             f"CLI did not produce a successful estimate: {cli}")
+            self.assertEqual(cli["bracket"], BASELINE["bracket"],
+                             f"CLI bracket {cli.get('bracket')} != baseline "
+                             f"{BASELINE['bracket']}")
             # batch entry point (real module main with args) — same fixture data
             import importlib
             sys.path.insert(0, os.path.join(root, "pipeline"))
@@ -321,6 +344,13 @@ class TestRealEntryPoints(unittest.TestCase):
             rows = est.run(anchors_path=anc, pools=[pf], out_path=None)
             batch = [r for r in rows if str(r.get("item_id")) == "2"]
             self.assertTrue(batch, "batch produced no row for item 2")
+            # SUCCESS required from the batch path independently:
+            self.assertEqual(batch[0]["status"], "ESTIMATE",
+                             f"batch did not produce a successful estimate: {batch[0]}")
+            self.assertEqual(batch[0]["bracket"], BASELINE["bracket"],
+                             f"batch bracket {batch[0].get('bracket')} != baseline "
+                             f"{BASELINE['bracket']}")
+            # only NOW compare the two successful outputs to each other
             self.assertEqual(batch[0]["status"], cli["status"])
             self.assertEqual(batch[0]["bracket"], cli["bracket"])
             self.assertEqual(batch[0]["quantity"], cli["quantity"])
@@ -395,8 +425,12 @@ class TestPoolManifestStrictness(unittest.TestCase):
     """Astra 2.3/2.4/2.5: manifest must verify content, cursor chain, completeness."""
 
     def _manifest(self, **over):
-        pages = [{"cursor": "", "next_cursor": "", "fetched_utc": "2026-09-09T00:00:00Z",
-                  "count": 3, "raw_response_sha256": "x" * 64}]
+        pages = [{"request_cursor": "", "cursor": "", "next_cursor": "",
+                  "fetched_utc": "2026-09-09T00:00:00Z", "count": 3,
+                  "http_status": 200,
+                  "page_ids_sha256": __import__("hashlib").sha256(
+                      json.dumps(["1", "2", "3"]).encode()).hexdigest(),
+                  "raw_response_sha256": "x" * 64}]
         m = pool_manifest.make_manifest(
             {"Keyword": "k", "SortType": 2, "SortAggregation": 5}, pages,
             "2026-09-09T00:00:00Z", "2026-09-09T00:01:00Z", True, ["1", "2", "3"])

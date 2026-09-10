@@ -58,7 +58,10 @@ def main():
                              f"merge_anchors.py <base.jsonl> [delta.jsonl]")
 
     base = load(base_path)
-    if os.path.exists(delta_path):
+    if delta_path is not None:
+        if not os.path.exists(delta_path):
+            raise SystemExit(f"missing required input: {delta_path} "
+                             f"(explicitly supplied delta is never silently skipped)")
         delta = load(delta_path)
         replaced = 0
         for t, drec in delta.items():
@@ -82,9 +85,30 @@ def main():
     n_ok = n_refused = 0
     refused_path = os.path.join(os.path.dirname(OUT), "anchors_refused.jsonl")
     tmp_refused = refused_path + ".tmp"
+    # Round-4 finding 6: the two zero-sales disagreements were adjudicated
+    # against the LIVE economy API (Sales=0 there too): the wiki counts are
+    # unsupported. The adjudication is an explicit, committed file; any anchor
+    # listed as wiki_value_erroneous is refused at the merge boundary, so the
+    # refusal policy is implemented, not just narrated in the ledger.
+    adj_path = os.path.join(ROOT, "docs", "zero_sales_adjudications.json")
+    erroneous = set()
+    if os.path.exists(adj_path):
+        with open(adj_path) as af:
+            for k, v in json.load(af).get("adjudications", {}).items():
+                if v.get("adjudication") == "wiki_value_erroneous":
+                    erroneous.add(k)
     with open(tmp, "w") as f, open(tmp_refused, "w") as g:
         for t in sorted(base):
             r = base[t]
+            typed_key = ('bundle' if "entity_type:bundle" in (r.get("parse_notes") or [])
+                         else 'asset') + f":{r.get('item_id')}"
+            if typed_key in erroneous:
+                r = dict(r)
+                r["parse_ok"] = False
+                r["parse_notes"] = list(r.get("parse_notes") or []) + [
+                    f"adjudicated_wiki_value_erroneous ({typed_key}: live economy API "
+                    f"reports Sales=0; wiki count unsupported - see "
+                    f"docs/zero_sales_adjudications.json)"]
             # Parse-quality gate AT THE MERGE BOUNDARY (Astra round-3 finding 1):
             # failed parses are never shipped as anchors; they are archived with
             # full notes so the refusal itself is auditable.
