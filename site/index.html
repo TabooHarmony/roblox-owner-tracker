@@ -54,8 +54,8 @@
   <div id="out"></div>
 </main>
 <script>
-const POOLS = ["crown_pool_nfl_wrapped.json","party_pool_nfl_wrapped.json",
-               "stormbreak_pool_nfl_wrapped.json","confetti_pool_wrapped.json"];
+const POOLS = ["pools/crown_pool_nfl_wrapped.json","pools/party_pool_nfl_wrapped.json",
+               "pools/stormbreak_pool_nfl_wrapped.json","pools/confetti_pool_wrapped.json"];
 const ANCHORS = "anchors_compact.json";
 const ADJ = {"asset:96988749":true,"asset:14932":true}; // fetched from docs at runtime below
 let ANCHOR_DB = null;
@@ -167,9 +167,12 @@ async function lookup(idStr) {
   // item metadata via CORS proxy (falls back gracefully if proxy is down)
   let meta = null;
   try {
-    const r = await fetch("https://rbx-proxy.tabooharmony.workers.dev/economy.roblox.com/v2/assets/" + id + "/details");
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 6000);
+    const r = await fetch("https://rbx-proxy.tabooharmony.workers.dev/economy.roblox.com/v2/assets/" + id + "/details", { signal: ctl.signal });
+    clearTimeout(timer);
     if (r.ok) meta = await r.json();
-  } catch (e) { /* proxy down: name is optional, bracket math is local */ }
+  } catch (e) { /* proxy down/slow: name is optional, bracket math is local */ }
 
   const rec = ANCHOR_DB["asset:" + id];
   let res;
@@ -182,9 +185,14 @@ async function lookup(idStr) {
   }
   // find membership across all pools
   let hit = null;
-  for (const p of POOLS) {
-    const ids = await poolIds(p);
-    if (ids.includes(String(id))) { hit = { pool: p, ids }; break; }
+  try {
+    for (const p of POOLS) {
+      const ids = await poolIds(p);
+      if (ids.includes(String(id))) { hit = { pool: p, ids }; break; }
+    }
+  } catch (e) {
+    card.innerHTML = '<div class="err">Failed to load ranking data: ' + esc(String(e.message || e)) + '. Try reloading.</div>';
+    return;
   }
   if (!hit) {
     showIdentityOnly(meta, id, card);
@@ -197,8 +205,9 @@ async function lookup(idStr) {
 const poolCache = {};
 async function poolIds(file) {
   if (!poolCache[file]) {
-    const blob = await (await fetch(file)).json();
-    poolCache[file] = blob.item_ids.map(String);
+    const r = await fetch(file);
+    if (!r.ok) throw new Error("pool fetch " + r.status + " for " + file);
+    poolCache[file] = (await r.json()).item_ids.map(String);
   }
   return poolCache[file];
 }

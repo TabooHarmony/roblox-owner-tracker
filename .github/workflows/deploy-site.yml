@@ -23,9 +23,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Assemble site
         run: |
-          mkdir -p site/estimates site/docs
+          mkdir -p site/estimates site/docs site/pools
           cp estimates/estimates_v2.jsonl site/estimates/
           cp docs/crossval_summary.json site/docs/ || true
+          cp pools/*_wrapped.json site/pools/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
