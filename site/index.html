@@ -195,11 +195,93 @@ async function lookup(idStr) {
     return;
   }
   if (!hit) {
-    showIdentityOnly(meta, id, card);
+    await liveWalk(meta, id, card);
     return;
   }
   res = rankBracket(hit.ids, id, ANCHOR_DB);
   renderResult(meta, id, res, hit.pool, card);
+}
+
+// LIVE WALK MODE: item not in a frozen snapshot. Walk a fresh all-time-sales
+// search around the item's own name (what a user would type), find its rank,
+// and show the nearest wiki-evidenced neighbors. Transparent heuristic, NOT
+// the frozen-snapshot method: rankings move, anchors here are open-window
+// observations (items still on sale), not final counts. Clearly labeled.
+const PX = "https://rbx-proxy.tabooharmony.workers.dev/";
+async function liveWalk(meta, id, card) {
+  const name = meta && meta.Name;
+  if (!name) {
+    card.innerHTML = '<div class="err">Item identity unavailable (proxy down?) and ID not in any frozen snapshot.</div>';
+    return;
+  }
+  card.innerHTML = '<div class="meta">Not in a frozen snapshot \u2014 walking a live ranking for "' + esc(name) + '" (all-time sales)\u2026</div>';
+  let cursor = "", pages = [], seen = 0, targetPos = null;
+  try {
+    for (let page = 0; page < 10 && targetPos === null; page++) {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 10000);
+      const u = PX + "catalog.roblox.com/v2/search/items/details?Keyword=" + encodeURIComponent(name) +
+        "&Limit=120&SortType=2&SortAggregation=5" + (cursor ? "&Cursor=" + encodeURIComponent(cursor) : "");
+      const r = await fetch(u, { signal: ctl.signal });
+      clearTimeout(timer);
+      const j = await r.json();
+      if (!j.data) { card.innerHTML = '<div class="err">Search API returned an error; live walk aborted.</div>'; return; }
+      for (const it of j.data) {
+        seen++;
+        if (String(it.id) === String(id)) { targetPos = seen; break; }
+      }
+      pages.push(j.data.map(it => [String(it.id), it.name]));
+      if (!j.nextPageCursor) break;
+      cursor = j.nextPageCursor;
+      await new Promise(res => setTimeout(res, 1100));
+    }
+  } catch (e) {
+    card.innerHTML = '<div class="err">Live walk failed: ' + esc(String(e.message || e)) + '.</div>';
+    return;
+  }
+  if (targetPos === null) {
+    card.innerHTML = card.querySelector(".meta") ? card.innerHTML +
+      '<div class="abstain">ABSTAIN \u2014 not found in the top ' + seen +
+      ' all-time-sales results for its own name. Items this new or this rare have no ranking position to compare.</div>';
+    return;
+  }
+  // nearest wiki-evidenced neighbors around the target in this live walk
+  const flat = pages.flat();
+  const tIdx = flat.findIndex(x => x[0] === String(id));
+  let above = null, below = null;
+  for (let j = tIdx - 1; j >= 0; j--) {
+    const a = ANCHOR_DB["asset:" + flat[j][0]];
+    if (a && a.purchased != null) { above = { rank: j + 1, id: flat[j][0], name: flat[j][1], a }; break; }
+  }
+  for (let j = tIdx + 1; j < flat.length; j++) {
+    const a = ANCHOR_DB["asset:" + flat[j][0]];
+    if (a && a.purchased != null) { below = { rank: j + 1, id: flat[j][0], name: flat[j][1], a }; break; }
+  }
+  let html = "<h2>" + esc(name) + "</h2>";
+  html += '<div class="meta">ID ' + fmt(id) +
+    (meta ? " \u00b7 by " + esc(meta.Creator ? meta.Creator.Name : "?") : "") +
+    " \u00b7 rank " + targetPos + " of " + seen + ' seen in live all-time-sales search for its own name</div>';
+  html += '<div class="warn">LIVE heuristic ranking \u2014 not the frozen-snapshot method. Wiki evidence nearby is sparse; counts below are open-window observations from the wiki, NOT final totals.</div>';
+  if (above || below) {
+    html += '<div class="lbl">Nearest wiki-evidenced neighbors</div>';
+    if (above) html += '<div class="anchor">rank ' + above.rank + " \u00b7 " + esc(above.name) +
+      " \u00b7 <b>" + fmt(above.a.purchased) + "</b> purchases <i>(wiki, as of " + esc(above.a.purchased_as_of || "?") + ")</i></div>";
+    html += '<div class="anchor">rank ' + (tIdx + 1) + " \u00b7 <b>" + esc(name) + "</b> (this item)</div>";
+    if (below) html += '<div class="anchor">rank ' + below.rank + " \u00b7 " + esc(below.name) +
+      " \u00b7 <b>" + fmt(below.a.purchased) + "</b> purchases <i>(wiki, as of " + esc(below.a.purchased_as_of || "?") + ")</i></div>";
+    if (above && below && above.a.purchased >= below.a.purchased) {
+      html += '<div class="bracket">' + fmt(below.a.purchased) + " \u2013 " + fmt(above.a.purchased) + "</div>";
+      html += '<div class="warn">Rough interval between the nearest evidenced neighbors \u2014 both still on sale, so these are lower-bound observations, not final counts. Treat as an order-of-magnitude guide only.</div>';
+    } else {
+      html += '<div class="warn">No bracket: neighbor observations are inconsistent with the ranking (inversion) \u2014 see dates.</div>';
+    }
+  } else {
+    html += '<div class="abstain">No wiki evidence within ' + seen + ' ranking neighbors \u2014 no comparison possible for this item.</div>';
+  }
+  html += "<details><summary>method</summary><pre>live walk: Keyword=" + esc(name) +
+    " SortType=2 SortAggregation=5, " + pages.length + " page(s), " + seen + " items seen. " +
+    "Anchors: reviewed wiki database, open-window records. This is the experimental live mode; the frozen-snapshot method (four reviewed pools) is the validated one.</pre></details>";
+  card.innerHTML = html;
 }
 
 const poolCache = {};
