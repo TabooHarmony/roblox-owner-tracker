@@ -240,8 +240,7 @@ async function liveWalk(meta, id, card) {
     return;
   }
   if (targetPos === null) {
-    card.innerHTML = card.querySelector(".meta") ? card.innerHTML +
-      '<div class="abstain">ABSTAIN \u2014 not found in the top ' + seen +
+    card.innerHTML += '<div class="abstain">ABSTAIN \u2014 not found in the top ' + seen +
       ' all-time-sales results for its own name. Items this new or this rare have no ranking position to compare.</div>';
     return;
   }
