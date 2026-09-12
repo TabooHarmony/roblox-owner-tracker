@@ -51,52 +51,11 @@
 "use strict";
 
 // ---------- data ----------
-let ANCHORS = null; // Map id(string) -> anchor record (closed-final, eligible only)
-
-const MONTHS = {january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,
-  september:9,october:10,november:11,december:12,
-  jan:1,feb:2,mar:3,apr:4,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12};
-
-function parseDate(s) {
-  if (!s) return null;
-  const m = String(s).trim().match(/^([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})$/)
-         || String(s).trim().match(/^(\d{1,2})\s+([A-Za-z]+)\.?,?\s+(\d{4})$/);
-  if (!m) return null;
-  let mo, d, y;
-  if (/[A-Za-z]/.test(m[1])) { mo = MONTHS[m[1].toLowerCase()]; d = +m[2]; y = +m[3]; }
-  else { d = +m[1]; mo = MONTHS[m[2].toLowerCase()]; y = +m[3]; }
-  if (!mo) return null;
-  return [y, mo, d];
-}
-function cmpDate(a, b) { return a[0]-b[0] || a[1]-b[1] || a[2]-b[2]; }
-
-// An anchor is eligible iff: closed sale, all windows resolved, has a paired count
-// observed strictly after the last close, last close >= 2012, single-channel count,
-// and NOT a post-2021 re-release (those carry stale counts from the original run).
-function eligible(rec) {
-  if (!rec || rec.sale_state !== "closed") return false;
-  const wins = rec.windows || [];
-  if (!wins.length) return false;
-  for (const w of wins) if (w.state !== "resolved") return false;
-  if (!Number.isInteger(rec.purchased) || rec.purchased < 0) return false;
-  const a = parseDate(rec.purchased_as_of);
-  if (!a) return false;
-  let lastClose = null;
-  for (const w of wins) {
-    const d = parseDate(w.until);
-    if (d && (!lastClose || cmpDate(d, lastClose) > 0)) lastClose = d;
-  }
-  if (!lastClose || lastClose[0] < 2012) return false;
-  if (cmpDate(a, lastClose) <= 0) return false;
-  if (rec.purchase_count_scope !== "single") return false;
-  // post-2020 re-release: any window after the first that opens in 2021+ means the
-  // published count predates the later sale and is stale by construction.
-  for (let i = 1; i < wins.length; i++) {
-    const f = parseDate(wins[i].from);
-    if (f && f[0] >= 2021) return false;
-  }
-  return true;
-}
+let ANCHORS = null; // { id -> {p, as_of, until, t} } — precomputed eligible closed-final anchors.
+// Eligibility (applied at build time in pipeline, not here): closed sale, all windows
+// resolved, paired count observed strictly after the last close, last close >= 2012,
+// single-channel count, and no post-2020 re-release window (those carry stale counts,
+// e.g. ASCII White's 360 count predates its Nov 2025 return).
 
 // ---------- live walk ----------
 const PX = "https://rbx-proxy.tabooharmony.workers.dev/";
@@ -194,11 +153,11 @@ async function lookup(idStr) {
   // 4. bracket: nearest eligible anchors above/below rank
   let above = null, below = null;
   for (let j = rank - 2; j >= 0; j--) {          // flat is 0-based; target at index rank-1
-    const a = ANCHORS.get(flat[j][0]);
+    const a = ANCHORS[flat[j][0]];
     if (a) { above = { rank: j + 1, name: flat[j][1], a }; break; }
   }
   for (let j = rank; j < flat.length; j++) {
-    const a = ANCHORS.get(flat[j][0]);
+    const a = ANCHORS[flat[j][0]];
     if (a) { below = { rank: j + 1, name: flat[j][1], a }; break; }
   }
 
@@ -210,14 +169,14 @@ async function lookup(idStr) {
   if (above || below) {
     html += '<div class="lbl" style="margin-top:.6rem">Nearest evidenced neighbors</div>';
     if (above) html += '<div class="anchor">rank ' + above.rank + " · " + esc(above.name)
-      + " · <b>" + fmt(above.a.purchased) + "</b> purchases <i>(final count, as of "
-      + esc(above.a.purchased_as_of || "?") + ")</i></div>";
+      + " · <b>" + fmt(above.a.p) + "</b> purchases <i>(final count, as of "
+      + esc(above.a.as_of || "?") + ")</i></div>";
     html += '<div class="anchor">rank ' + rank + " · <b>" + esc(name) + "</b> (this item)</div>";
     if (below) html += '<div class="anchor">rank ' + below.rank + " · " + esc(below.name)
-      + " · <b>" + fmt(below.a.purchased) + "</b> purchases <i>(final count, as of "
-      + esc(below.a.purchased_as_of || "?") + ")</i></div>";
+      + " · <b>" + fmt(below.a.p) + "</b> purchases <i>(final count, as of "
+      + esc(below.a.as_of || "?") + ")</i></div>";
     if (above && below) {
-      const hi = above.a.purchased, lo = below.a.purchased;
+      const hi = above.a.p, lo = below.a.p;
       if (hi > lo) {
         html += '<div class="lbl" style="margin-top:.6rem">Estimated total purchases</div>'
           + '<div class="bracket">' + fmt(lo) + " – " + fmt(hi) + "</div>"
@@ -248,17 +207,7 @@ function fmt(n) { return Number(n).toLocaleString("en-US"); }
 
 // ---------- init ----------
 (async function () {
-  const [anchors, denied] = await Promise.all([
-    fetch("anchors_compact.json").then(r => r.json()),
-    fetch("rerelease_post2020.json").then(r => r.json()).catch(() => ({})),
-  ]);
-  ANCHORS = new Map();
-  for (const key of Object.keys(anchors)) {
-    const rec = anchors[key];
-    const id = String(rec.item_id);
-    if (denied[id]) continue;               // post-2020 re-release: count stale, skip
-    if (eligible(rec)) ANCHORS.set(id, rec);
-  }
+  ANCHORS = await fetch("anchors_eligible.json").then(r => r.json());
   document.getElementById("go").disabled = false;
   const params = new URLSearchParams(location.search);
   if (params.get("id")) {
