@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>roblox-owner-tracker — item lookup</title>
+<title>roblox-owner-tracker</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body { font-family: system-ui, sans-serif; background: #101418; color: #e6e8ea;
          margin: 0; padding: 2rem 1rem; }
-  main { max-width: 640px; margin: 0 auto; }
+  main { max-width: 620px; margin: 0 auto; }
   h1 { font-size: 1.25rem; margin: 0 0 .25rem; }
-  .sub { color: #9aa3ab; font-size: .85rem; margin-bottom: 1rem; }
+  .sub { color: #9aa3ab; font-size: .85rem; margin-bottom: 1.25rem; }
   .sub a { color: #7ab8ff; }
   form { display: flex; gap: .5rem; margin-bottom: 1rem; }
   input { flex: 1; padding: .6rem .8rem; font-size: 1rem; border-radius: 8px;
@@ -19,52 +19,45 @@
   button { padding: .6rem 1.1rem; font-size: 1rem; border-radius: 8px; border: 0;
            background: #2f6fdb; color: #fff; cursor: pointer; }
   button:disabled { opacity: .5; cursor: default; }
-  .banner { border: 1px solid #5a4d1f; background: #241f0e; color: #d9c36a;
-            border-radius: 8px; padding: .6rem .8rem; font-size: .8rem; margin-bottom: 1rem; }
-  .err { border: 1px solid #6b2737; background: #241014; color: #e08a96;
-         border-radius: 8px; padding: .6rem .8rem; font-size: .85rem; margin-bottom: 1rem; }
   .card { border: 1px solid #2a333c; border-radius: 10px; padding: 1rem 1.1rem;
           background: #161c22; }
-  .card h2 { font-size: 1.05rem; margin: 0 0 .15rem; }
-  .meta { color: #9aa3ab; font-size: .8rem; margin-bottom: .8rem; }
+  .card h2 { font-size: 1.1rem; margin: 0 0 .15rem; }
+  .meta { color: #9aa3ab; font-size: .8rem; margin-bottom: .7rem; }
   .bracket { font-size: 2rem; font-weight: 700; margin: .4rem 0; }
   .lbl { color: #9aa3ab; font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; }
-  .anchor { border-top: 1px solid #232c34; padding: .6rem 0; font-size: .85rem; }
+  .anchor { border-top: 1px solid #232c34; padding: .55rem 0; font-size: .85rem; }
   .anchor b { color: #cfd6dc; }
-  .rank-line { font-size: .85rem; margin: .4rem 0; }
+  .note { color: #9aa3ab; font-size: .8rem; margin-top: .6rem; }
+  .warn { color: #d9c36a; font-size: .82rem; margin-top: .5rem; }
+  .err  { color: #e08a96; font-size: .9rem; }
+  .progress { color: #7ab8ff; font-size: .85rem; margin-top: .6rem; }
   details { margin-top: .8rem; font-size: .8rem; color: #9aa3ab; }
-  details pre { white-space: pre-wrap; word-break: break-all; font-size: .7rem; }
-  .warn { color: #d9c36a; font-size: .8rem; margin-top: .4rem; }
-  .abstain { border-left: 3px solid #5a4d1f; padding: .5rem .8rem; background: #1c1a12;
-             border-radius: 0 8px 8px 0; font-size: .9rem; margin-top: .5rem; }
+  details pre { white-space: pre-wrap; word-break: break-word; font-size: .72rem; }
 </style>
 </head>
 <body>
 <main>
   <h1>roblox-owner-tracker</h1>
-  <div class="sub">experimental rank-neighbor comparison &middot; method by Maggy (Maggy Rarefication)
-    &middot; <a href="https://github.com/TabooHarmony/roblox-owner-tracker">source</a></div>
-  <div class="banner">Experimental, uncalibrated. The interval below is a rank-neighbor
-    comparison from frozen pool snapshots and reviewed wiki anchors — not a verified bound
-    and not a confidence interval. Ordering is approximate (~17% local inversions measured).</div>
+  <div class="sub">live sales-rank bracketing for Roblox-published catalog items &middot;
+    method by Maggy (Maggy Rarefication) &middot;
+    <a href="https://github.com/TabooHarmony/roblox-owner-tracker">source</a></div>
   <form id="f">
-    <input id="id" inputmode="numeric" pattern="\d*" placeholder="Roblox asset ID" autocomplete="off">
-    <button id="go" type="submit">Look up</button>
+    <input id="id" inputmode="numeric" pattern="\d*" placeholder="Roblox catalog ID" autocomplete="off">
+    <button id="go" type="submit" disabled>Look up</button>
   </form>
   <div id="out"></div>
 </main>
 <script>
-const POOLS = ["pools/crown_pool_nfl_wrapped.json","pools/party_pool_nfl_wrapped.json",
-               "pools/stormbreak_pool_nfl_wrapped.json","pools/confetti_pool_wrapped.json"];
-const ANCHORS = "anchors_compact.json";
-const ADJ = {"asset:96988749":true,"asset:14932":true}; // fetched from docs at runtime below
-let ANCHOR_DB = null;
+"use strict";
+
+// ---------- data ----------
+let ANCHORS = null; // Map id(string) -> anchor record (closed-final, eligible only)
 
 const MONTHS = {january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,
   september:9,october:10,november:11,december:12,
   jan:1,feb:2,mar:3,apr:4,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12};
 
-function parseUntil(s) {
+function parseDate(s) {
   if (!s) return null;
   const m = String(s).trim().match(/^([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})$/)
          || String(s).trim().match(/^(\d{1,2})\s+([A-Za-z]+)\.?,?\s+(\d{4})$/);
@@ -73,263 +66,205 @@ function parseUntil(s) {
   if (/[A-Za-z]/.test(m[1])) { mo = MONTHS[m[1].toLowerCase()]; d = +m[2]; y = +m[3]; }
   else { d = +m[1]; mo = MONTHS[m[2].toLowerCase()]; y = +m[3]; }
   if (!mo) return null;
-  const dt = new Date(Date.UTC(y, mo - 1, d));
-  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
   return [y, mo, d];
 }
+function cmpDate(a, b) { return a[0]-b[0] || a[1]-b[1] || a[2]-b[2]; }
 
-function cmpDate(a, b) { return a[0] - b[0] || a[1] - b[1] || a[2] - b[2]; }
-
-const MIN_CLOSED_YEAR = 2012, MAX_SANE_WIDTH_RATIO = 4.0;
-
-function anchorEligible(rec) {
-  if (rec.parse_ok === false) return [false, "parse not ok"];
-  if ((rec.parse_notes || []).includes("entity_type:bundle")) return [false, "bundle record (out of scope)"];
-  if (ADJ["asset:" + rec.item_id]) return [false, "adjudicated wiki value erroneous (Sales=0 per economy API)"];
-  if (rec.sale_state !== "closed") return [false, "not closed-final (" + rec.sale_state + ")"];
-  if (!rec.until) return [false, "no until date"];
-  const wins = rec.windows;
-  if (!wins || !wins.length) return [false, "no window model"];
-  for (const w of wins) if (w.state !== "resolved") return [false, "window " + w.index + " unresolved/open"];
+// An anchor is eligible iff: closed sale, all windows resolved, has a paired count
+// observed strictly after the last close, last close >= 2012, single-channel count,
+// and NOT a post-2021 re-release (those carry stale counts from the original run).
+function eligible(rec) {
+  if (!rec || rec.sale_state !== "closed") return false;
+  const wins = rec.windows || [];
+  if (!wins.length) return false;
+  for (const w of wins) if (w.state !== "resolved") return false;
+  if (!Number.isInteger(rec.purchased) || rec.purchased < 0) return false;
+  const a = parseDate(rec.purchased_as_of);
+  if (!a) return false;
   let lastClose = null;
   for (const w of wins) {
-    if (!w.until) continue;
-    const du = parseUntil(w.until);
-    if (du && (!lastClose || cmpDate(du, lastClose) > 0)) lastClose = du;
+    const d = parseDate(w.until);
+    if (d && (!lastClose || cmpDate(d, lastClose) > 0)) lastClose = d;
   }
-  if (!lastClose) return [false, "no parseable window close"];
-  if (lastClose[0] < MIN_CLOSED_YEAR) return [false, "pre-2012 closure"];
-  if (rec.purchased == null) return [false, rec.unpaired_purchased != null ? "unpaired count only" : "no purchase count"];
-  if (!Number.isInteger(rec.purchased) || rec.purchased < 0) return [false, "malformed purchase count"];
-  const a = parseUntil(rec.purchased_as_of);
-  if (!a) return [false, "unparseable purchased_as_of"];
-  if (cmpDate(a, lastClose) <= 0) return [false, "stale count: not observed after last window close"];
-  if (rec.purchase_count_scope !== "single") return [false, "count channel coverage unproven"];
-  return [true, "ok"];
+  if (!lastClose || lastClose[0] < 2012) return false;
+  if (cmpDate(a, lastClose) <= 0) return false;
+  if (rec.purchase_count_scope !== "single") return false;
+  // post-2020 re-release: any window after the first that opens in 2021+ means the
+  // published count predates the later sale and is stale by construction.
+  for (let i = 1; i < wins.length; i++) {
+    const f = parseDate(wins[i].from);
+    if (f && f[0] >= 2021) return false;
+  }
+  return true;
 }
 
-function rankBracket(poolIds, targetId, db) {
-  targetId = String(targetId);
-  if (poolIds.includes(targetId) === false)
-    return { status: "ABSTAIN", reason: "TARGET_NOT_IN_POOL",
-             detail: "target absent from all frozen pool snapshots" };
-  if (new Set(poolIds).size !== poolIds.length)
-    return { status: "ABSTAIN", reason: "DUPLICATE_POOL_IDS", detail: "duplicate id(s); ranking ambiguous" };
-  const ti = poolIds.indexOf(targetId);
-  if (poolIds.lastIndexOf(targetId) !== ti)
-    return { status: "ABSTAIN", reason: "TARGET_DUPLICATED", detail: "target appears multiple times in pool" };
-  let above = null, below = null;
-  for (let j = ti - 1; j >= 0; j--) {
-    const a = db["asset:" + poolIds[j]];
-    if (a && anchorEligible(a)[0]) { above = [j, a]; break; }
-  }
-  for (let j = ti + 1; j < poolIds.length; j++) {
-    const a = db["asset:" + poolIds[j]];
-    if (a && anchorEligible(a)[0]) { below = [j, a]; break; }
-  }
-  if (!above || !below) {
-    const m = [];
-    if (!above) m.push("no eligible closed-final anchor above");
-    if (!below) m.push("no eligible closed-final anchor below");
-    const suffix = !above ? (!below ? "_AND_BELOW" : "_ABOVE") : "_BELOW";
-    return { status: "ABSTAIN", reason: "NO_ELIGIBLE_ANCHOR" + suffix, detail: m.join("; ") };
-  }
-  const hi = above[1].purchased, lo = below[1].purchased;
-  if (hi == null || lo == null) return { status: "ABSTAIN", reason: "ANCHOR_COUNT_MISSING", detail: "eligible anchor has no paired count" };
-  if (hi < lo) return { status: "ABSTAIN", reason: "ANCHOR_INVERSION",
-    detail: "upper-rank anchor purchased=" + hi + " < lower-rank anchor purchased=" + lo };
-  if (hi === lo) return { status: "ABSTAIN", reason: "SINGLETON_INTERVAL",
-    detail: "both anchors report identical counts" };
-  const warnings = [];
-  if (lo / hi < 1 / MAX_SANE_WIDTH_RATIO) warnings.push("wide bracket (" + (hi / Math.max(lo, 1)).toFixed(1) + "x)");
-  return { status: "ESTIMATE", warnings,
-    bracket: [lo, hi], rank_in_pool: ti, pool_len: poolIds.length,
-    above: { rank: above[0], purchased: hi, title: above[1].title,
-             purchased_as_of: above[1].purchased_as_of, until: above[1].until },
-    below: { rank: below[0], purchased: lo, title: below[1].title,
-             purchased_as_of: below[1].purchased_as_of, until: below[1].until },
-    note: "rank-neighbor interval, NOT a verified bound" };
+// ---------- live walk ----------
+const PX = "https://rbx-proxy.tabooharmony.workers.dev/";
+const WALK_KW_SUFFIX = " red orange yellow green blue pink white";
+const WALK_PARAMS = "&Limit=120&SortType=2&SortAggregation=5&IncludeNotForSale=true&CreatorName=Roblox&CreatorType=User";
+const PAGE_DELAY_MS = 6500;
+const MAX_PAGES = 9;
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function fetchProxied(path, timeoutMs) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), timeoutMs || 12000);
+  try {
+    const r = await fetch(PX + path, { signal: ctl.signal });
+    if (!r.ok) throw new Error("API " + r.status);
+    return await r.json();
+  } finally { clearTimeout(t); }
 }
 
-function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
-function fmt(n) { return n.toLocaleString("en-US"); }
-
+// ---------- lookup ----------
 async function lookup(idStr) {
   const out = document.getElementById("out");
   out.innerHTML = "";
-  const id = Number(idStr);
-  if (!Number.isInteger(id) || id <= 0) {
-    out.innerHTML = '<div class="err">Enter a numeric Roblox asset ID.</div>'; return;
+  const id = String(idStr).trim();
+  if (!/^\d+$/.test(id) || +id <= 0) {
+    out.innerHTML = '<div class="card"><div class="err">Enter a numeric Roblox catalog ID.</div></div>';
+    return;
   }
-  const card = document.createElement("div"); card.className = "card";
-  card.textContent = "Loading\u2026"; out.appendChild(card);
+  const card = document.createElement("div");
+  card.className = "card";
+  card.textContent = "Fetching item…";
+  out.appendChild(card);
 
-  // item metadata via CORS proxy (falls back gracefully if proxy is down)
+  // 1. identity
   let meta = null;
   try {
-    const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 6000);
-    const r = await fetch("https://rbx-proxy.tabooharmony.workers.dev/economy.roblox.com/v2/assets/" + id + "/details", { signal: ctl.signal });
-    clearTimeout(timer);
-    if (r.ok) meta = await r.json();
-  } catch (e) { /* proxy down/slow: name is optional, bracket math is local */ }
+    meta = await fetchProxied("economy.roblox.com/v2/assets/" + id + "/details", 8000);
+  } catch (e) {}
+  if (!meta || !meta.Name) {
+    card.innerHTML = '<div class="err">Could not fetch this item from Roblox. The ID may not exist, or the API is down.</div>';
+    return;
+  }
+  const name = meta.Name;
+  const creator = (meta.Creator && meta.Creator.Name) || "?";
 
-  const rec = ANCHOR_DB["asset:" + id];
-  let res;
-  let poolFile = null;
-  if (rec && rec.pool) {
-    poolFile = rec.pool;
-  } else {
-    // no anchor: still try every pool for membership (membership is what matters)
-    res = null;
-  }
-  // find membership across all pools
-  let hit = null;
-  try {
-    for (const p of POOLS) {
-      const ids = await poolIds(p);
-      if (ids.includes(String(id))) { hit = { pool: p, ids }; break; }
-    }
-  } catch (e) {
-    card.innerHTML = '<div class="err">Failed to load ranking data: ' + esc(String(e.message || e)) + '. Try reloading.</div>';
+  // 2. Roblox-only scope
+  if (creator !== "Roblox") {
+    card.innerHTML = "<h2>" + esc(name) + "</h2>"
+      + '<div class="meta">ID ' + fmt(+id) + " · by " + esc(creator) + "</div>"
+      + '<div class="note">Only Roblox-published items are supported.</div>';
     return;
   }
-  if (!hit) {
-    await liveWalk(meta, id, card);
-    return;
-  }
-  res = rankBracket(hit.ids, id, ANCHOR_DB);
-  renderResult(meta, id, res, hit.pool, card);
-}
 
-// LIVE WALK MODE: item not in a frozen snapshot. Walk a fresh all-time-sales
-// search around the item's own name (what a user would type), find its rank,
-// and show the nearest wiki-evidenced neighbors. Transparent heuristic, NOT
-// the frozen-snapshot method: rankings move, anchors here are open-window
-// observations (items still on sale), not final counts. Clearly labeled.
-const PX = "https://rbx-proxy.tabooharmony.workers.dev/";
-async function liveWalk(meta, id, card) {
-  const name = meta && meta.Name;
-  if (!name) {
-    card.innerHTML = '<div class="err">Item identity unavailable (proxy down?) and ID not in any frozen snapshot.</div>';
-    return;
-  }
-  card.innerHTML = '<div class="meta">Not in a frozen snapshot \u2014 walking a live ranking for "' + esc(name) + '" (all-time sales)\u2026</div>';
-  let cursor = "", pages = [], seen = 0, targetPos = null;
+  // 3. walk: full name + rainbow padding, all-time sales, Roblox creator filter
+  const kw = name + WALK_KW_SUFFIX;
+  let header = "<h2>" + esc(name) + "</h2>"
+    + '<div class="meta">ID ' + fmt(+id)
+    + (meta.Created ? " · created " + esc(String(meta.Created).slice(0, 10)) : "")
+    + (meta.IsForSale ? " · still on sale" : " · off sale")
+    + "</div>";
+  card.innerHTML = header + '<div class="progress">walking…</div>';
+  const prog = card.querySelector(".progress");
+
+  let cursor = "", seen = 0, rank = null, flat = [];
+  let pages = 0;
   try {
-    for (let page = 0; page < 10 && targetPos === null; page++) {
-      const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), 10000);
-      const u = PX + "catalog.roblox.com/v2/search/items/details?Keyword=" + encodeURIComponent(name) +
-        "&Limit=120&SortType=2&SortAggregation=5" + (cursor ? "&Cursor=" + encodeURIComponent(cursor) : "");
-      const r = await fetch(u, { signal: ctl.signal });
-      clearTimeout(timer);
-      const j = await r.json();
-      if (!j.data) { card.innerHTML = '<div class="err">Search API returned an error; live walk aborted.</div>'; return; }
-      for (const it of j.data) {
+    while (pages < MAX_PAGES && rank === null) {
+      const url = "catalog.roblox.com/v2/search/items/details?Keyword=" + encodeURIComponent(kw)
+        + WALK_PARAMS + (cursor ? "&Cursor=" + encodeURIComponent(cursor) : "");
+      const d = await fetchProxied(url, 15000);
+      pages++;
+      const data = d.data || [];
+      for (const it of data) {
         seen++;
-        if (String(it.id) === String(id)) { targetPos = seen; break; }
+        flat.push([String(it.id), it.name]);
+        if (String(it.id) === id) rank = seen;
       }
-      pages.push(j.data.map(it => [String(it.id), it.name]));
-      if (!j.nextPageCursor) break;
-      cursor = j.nextPageCursor;
-      await new Promise(res => setTimeout(res, 1100));
+      prog.textContent = "walking… page " + pages + ", " + seen + " items scanned";
+      if (rank !== null || !d.nextPageCursor || !data.length) break;
+      cursor = d.nextPageCursor;
+      await sleep(PAGE_DELAY_MS);
     }
   } catch (e) {
-    card.innerHTML = '<div class="err">Live walk failed: ' + esc(String(e.message || e)) + '.</div>';
+    card.innerHTML = header + '<div class="err">Walk failed: ' + esc(String(e.message || e)) + ".</div>";
     return;
   }
-  if (targetPos === null) {
-    card.innerHTML += '<div class="abstain">ABSTAIN \u2014 not found in the top ' + seen +
-      ' all-time-sales results for its own name. Items this new or this rare have no ranking position to compare.</div>';
+
+  if (rank === null) {
+    card.innerHTML = header
+      + '<div class="note">Scanned ' + seen + " items in the live all-time-sales ranking for this item's neighborhood — it doesn't appear. Sales this low leave no rank to compare against, so no estimate is possible.</div>";
     return;
   }
-  // nearest wiki-evidenced neighbors around the target in this live walk
-  const flat = pages.flat();
-  const tIdx = flat.findIndex(x => x[0] === String(id));
+
+  // 4. bracket: nearest eligible anchors above/below rank
   let above = null, below = null;
-  for (let j = tIdx - 1; j >= 0; j--) {
-    const a = ANCHOR_DB["asset:" + flat[j][0]];
-    if (a && a.purchased != null) { above = { rank: j + 1, id: flat[j][0], name: flat[j][1], a }; break; }
+  for (let j = rank - 2; j >= 0; j--) {          // flat is 0-based; target at index rank-1
+    const a = ANCHORS.get(flat[j][0]);
+    if (a) { above = { rank: j + 1, name: flat[j][1], a }; break; }
   }
-  for (let j = tIdx + 1; j < flat.length; j++) {
-    const a = ANCHOR_DB["asset:" + flat[j][0]];
-    if (a && a.purchased != null) { below = { rank: j + 1, id: flat[j][0], name: flat[j][1], a }; break; }
+  for (let j = rank; j < flat.length; j++) {
+    const a = ANCHORS.get(flat[j][0]);
+    if (a) { below = { rank: j + 1, name: flat[j][1], a }; break; }
   }
-  let html = "<h2>" + esc(name) + "</h2>";
-  html += '<div class="meta">ID ' + fmt(id) +
-    (meta ? " \u00b7 by " + esc(meta.Creator ? meta.Creator.Name : "?") : "") +
-    " \u00b7 rank " + targetPos + " of " + seen + ' seen in live all-time-sales search for its own name</div>';
-  html += '<div class="warn">LIVE heuristic ranking \u2014 not the frozen-snapshot method. Wiki evidence nearby is sparse; counts below are open-window observations from the wiki, NOT final totals.</div>';
+
+  let html = header
+    + '<div class="note">Rank <b>' + rank + "</b> of " + seen
+    + " in today's all-time-sales neighborhood for this item (live walk, "
+    + pages + (pages === 1 ? " page" : " pages") + ").</div>";
+
   if (above || below) {
-    html += '<div class="lbl">Nearest wiki-evidenced neighbors</div>';
-    if (above) html += '<div class="anchor">rank ' + above.rank + " \u00b7 " + esc(above.name) +
-      " \u00b7 <b>" + fmt(above.a.purchased) + "</b> purchases <i>(wiki, as of " + esc(above.a.purchased_as_of || "?") + ")</i></div>";
-    html += '<div class="anchor">rank ' + (tIdx + 1) + " \u00b7 <b>" + esc(name) + "</b> (this item)</div>";
-    if (below) html += '<div class="anchor">rank ' + below.rank + " \u00b7 " + esc(below.name) +
-      " \u00b7 <b>" + fmt(below.a.purchased) + "</b> purchases <i>(wiki, as of " + esc(below.a.purchased_as_of || "?") + ")</i></div>";
-    if (above && below && above.a.purchased >= below.a.purchased) {
-      html += '<div class="bracket">' + fmt(below.a.purchased) + " \u2013 " + fmt(above.a.purchased) + "</div>";
-      html += '<div class="warn">Rough interval between the nearest evidenced neighbors \u2014 both still on sale, so these are lower-bound observations, not final counts. Treat as an order-of-magnitude guide only.</div>';
+    html += '<div class="lbl" style="margin-top:.6rem">Nearest evidenced neighbors</div>';
+    if (above) html += '<div class="anchor">rank ' + above.rank + " · " + esc(above.name)
+      + " · <b>" + fmt(above.a.purchased) + "</b> purchases <i>(final count, as of "
+      + esc(above.a.purchased_as_of || "?") + ")</i></div>";
+    html += '<div class="anchor">rank ' + rank + " · <b>" + esc(name) + "</b> (this item)</div>";
+    if (below) html += '<div class="anchor">rank ' + below.rank + " · " + esc(below.name)
+      + " · <b>" + fmt(below.a.purchased) + "</b> purchases <i>(final count, as of "
+      + esc(below.a.purchased_as_of || "?") + ")</i></div>";
+    if (above && below) {
+      const hi = above.a.purchased, lo = below.a.purchased;
+      if (hi > lo) {
+        html += '<div class="lbl" style="margin-top:.6rem">Estimated total purchases</div>'
+          + '<div class="bracket">' + fmt(lo) + " – " + fmt(hi) + "</div>"
+          + '<div class="note">Rank-neighbor interval between the two evidenced items above. This is a comparison, not a verified bound — rankings drift and era differences within an interval can skew it.</div>';
+      } else {
+        html += '<div class="note">No bracket: the neighbors' + "'" + ' recorded counts contradict the ranking order, so no clean interval exists.</div>';
+      }
     } else {
-      html += '<div class="warn">No bracket: neighbor observations are inconsistent with the ranking (inversion) \u2014 see dates.</div>';
+      html += '<div class="note">Evidence on only one side of the rank — no interval possible.</div>';
     }
   } else {
-    html += '<div class="abstain">No wiki evidence within ' + seen + ' ranking neighbors \u2014 no comparison possible for this item.</div>';
+    html += '<div class="note">No evidenced neighbors anywhere on this item' + "'"
+      + "s sales ranking — nothing to compare against.</div>";
   }
-  html += "<details><summary>method</summary><pre>live walk: Keyword=" + esc(name) +
-    " SortType=2 SortAggregation=5, " + pages.length + " page(s), " + seen + " items seen. " +
-    "Anchors: reviewed wiki database, open-window records. This is the experimental live mode; the frozen-snapshot method (four reviewed pools) is the validated one.</pre></details>";
+
+  html += "<details><summary>how this was computed</summary><pre>"
+    + "walk: Keyword=\"" + kw + "\" SortType=2 SortAggregation=5, creator=Roblox, "
+    + "includeNotForSale; " + pages + " page(s), " + seen + " items.\n"
+    + "anchors: reviewed wiki purchase records, closed-final items only; "
+    + "post-2021 re-releases excluded (their published counts predate the re-release).\n"
+    + "walked live at " + new Date().toISOString() + "</pre></details>";
   card.innerHTML = html;
 }
 
-const poolCache = {};
-async function poolIds(file) {
-  if (!poolCache[file]) {
-    const r = await fetch(file);
-    if (!r.ok) throw new Error("pool fetch " + r.status + " for " + file);
-    poolCache[file] = (await r.json()).item_ids.map(String);
+// ---------- helpers ----------
+function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+function fmt(n) { return Number(n).toLocaleString("en-US"); }
+
+// ---------- init ----------
+(async function () {
+  const [anchors, denied] = await Promise.all([
+    fetch("anchors_compact.json").then(r => r.json()),
+    fetch("rerelease_post2020.json").then(r => r.json()).catch(() => ({})),
+  ]);
+  ANCHORS = new Map();
+  for (const key of Object.keys(anchors)) {
+    const rec = anchors[key];
+    const id = String(rec.item_id);
+    if (denied[id]) continue;               // post-2020 re-release: count stale, skip
+    if (eligible(rec)) ANCHORS.set(id, rec);
   }
-  return poolCache[file];
-}
-
-function showIdentityOnly(meta, id, card) {
-  const name = meta && meta.Name ? meta.Name : "unknown item";
-  card.innerHTML =
-    "<h2>" + esc(name) + "</h2>" +
-    '<div class="meta">ID ' + fmt(id) + (meta ? " \u00b7 by " + esc(meta.Creator ? meta.Creator.Name : "?") : "") + "</div>" +
-    '<div class="abstain">ABSTAIN \u2014 TARGET_NOT_IN_POOL: this item is not in any frozen ranking snapshot, ' +
-    "so there is no rank position to compare neighbors against. Only items in the four reviewed " +
-    "snapshots (best-selling hats/hair around the four shipped targets) can be bracketed.</div>";
-}
-
-function renderResult(meta, id, res, poolFile, card) {
-  const name = meta && meta.Name ? meta.Name : (res && res.above ? "item " + id : "item " + id);
-  let html = "<h2>" + esc(name) + "</h2>";
-  html += '<div class="meta">ID ' + fmt(id) +
-    (meta ? " \u00b7 by " + esc(meta.Creator ? meta.Creator.Name : "?") : "") +
-    " \u00b7 pool: " + esc(poolFile) + "</div>";
-  if (res.status === "ESTIMATE") {
-    html += '<div class="lbl">Cumulative purchases (lower-bound interval)</div>';
-    html += '<div class="bracket">' + fmt(res.bracket[0]) + " \u2013 " + fmt(res.bracket[1]) + "</div>";
-    html += '<div class="rank-line">rank ' + (res.rank_in_pool + 1) + " of " + res.pool_len +
-            " in snapshot \u00b7 between: " + esc(res.above.title) + " (" + fmt(res.above.purchased) +
-            " sales) and " + esc(res.below.title) + " (" + fmt(res.below.purchased) + " sales)</div>";
-    if (res.warnings.length) html += '<div class="warn">\u26a0 ' + esc(res.warnings.join("; ")) + "</div>";
-    html += '<div class="warn">' + esc(res.note) + "</div>";
-  } else {
-    html += '<div class="abstain">ABSTAIN \u2014 ' + esc(res.reason) + ": " + esc(res.detail || "") + "</div>";
-  }
-  html += "<details><summary>evidence</summary><pre>" +
-    esc(JSON.stringify({ above: res.above, below: res.below, warnings: res.warnings }, null, 1)) + "</pre></details>";
-  card.innerHTML = html;
-}
-
-(async function init() {
-  ANCHOR_DB = await (await fetch(ANCHORS)).json();
   document.getElementById("go").disabled = false;
   const params = new URLSearchParams(location.search);
-  if (params.get("id")) { document.getElementById("id").value = params.get("id"); lookup(params.get("id")); }
+  if (params.get("id")) {
+    document.getElementById("id").value = params.get("id");
+    lookup(params.get("id"));
+  }
 })();
 document.getElementById("f").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -337,7 +272,6 @@ document.getElementById("f").addEventListener("submit", (e) => {
   history.replaceState(null, "", "?id=" + encodeURIComponent(v));
   lookup(v);
 });
-document.getElementById("go").disabled = true;
 </script>
 </body>
 </html>
