@@ -3,230 +3,133 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>roblox-owner-tracker</title>
+<title>roblox owner tracker</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body { font-family: system-ui, sans-serif; background: #101418; color: #e6e8ea;
-         margin: 0; padding: 2rem 1rem; }
-  main { max-width: 620px; margin: 0 auto; }
-  h1 { font-size: 1.25rem; margin: 0 0 .25rem; }
-  .sub { color: #9aa3ab; font-size: .85rem; margin-bottom: 1.25rem; }
-  .sub a { color: #7ab8ff; }
-  form { display: flex; gap: .5rem; margin-bottom: 1rem; }
-  input { flex: 1; padding: .6rem .8rem; font-size: 1rem; border-radius: 8px;
-          border: 1px solid #3a444d; background: #1a2128; color: #e6e8ea; }
-  button { padding: .6rem 1.1rem; font-size: 1rem; border-radius: 8px; border: 0;
+         margin: 0; padding: 3rem 1rem; }
+  main { max-width: 560px; margin: 0 auto; }
+  h1 { font-size: 1rem; font-weight: 600; margin: 0 0 1.5rem; }
+  h1 a { color: #9aa3ab; text-decoration: none; font-weight: 400; margin-left: .4rem; }
+  form { display: flex; gap: .5rem; margin-bottom: 1.5rem; }
+  input { flex: 1; padding: .65rem .9rem; font-size: 1rem; border-radius: 8px;
+          border: 1px solid #2a333c; background: #161c22; color: #e6e8ea; }
+  button { padding: .65rem 1.1rem; font-size: 1rem; border-radius: 8px; border: 0;
            background: #2f6fdb; color: #fff; cursor: pointer; }
-  button:disabled { opacity: .5; cursor: default; }
-  .card { border: 1px solid #2a333c; border-radius: 10px; padding: 1rem 1.1rem;
-          background: #161c22; }
-  .card h2 { font-size: 1.1rem; margin: 0 0 .15rem; }
-  .meta { color: #9aa3ab; font-size: .8rem; margin-bottom: .7rem; }
-  .bracket { font-size: 2rem; font-weight: 700; margin: .4rem 0; }
-  .lbl { color: #9aa3ab; font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; }
-  .anchor { border-top: 1px solid #232c34; padding: .55rem 0; font-size: .85rem; }
-  .anchor b { color: #cfd6dc; }
-  .anchor-target b { color: #7ab8ff; }
-  .note { color: #9aa3ab; font-size: .8rem; margin-top: .6rem; }
-  .warn { color: #d9c36a; font-size: .82rem; margin-top: .5rem; }
-  .err  { color: #e08a96; font-size: .9rem; }
-  .progress { color: #7ab8ff; font-size: .85rem; margin-top: .6rem; }
-  details { margin-top: .8rem; font-size: .8rem; color: #9aa3ab; }
-  details pre { white-space: pre-wrap; word-break: break-word; font-size: .72rem; }
+  button:disabled { opacity: .4; cursor: default; }
+  .r { display: none; }
+  .name { font-size: 1.1rem; font-weight: 600; }
+  .num { font-size: 2.4rem; font-weight: 700; margin: .5rem 0 .1rem; }
+  .cap { color: #9aa3ab; font-size: .8rem; }
+  .ev { color: #9aa3ab; font-size: .8rem; margin-top: 1rem; line-height: 1.7; }
+  .msg { color: #9aa3ab; margin-top: .8rem; }
+  .fail { color: #e08a96; }
+  .foot { color: #556069; font-size: .75rem; margin-top: 3rem; }
+  .foot a { color: #556069; }
 </style>
 </head>
 <body>
 <main>
-  <h1>roblox-owner-tracker</h1>
-  <div class="sub">live sales-rank bracketing for Roblox-published catalog items &middot;
-    method by Maggy (Maggy Rarefication) &middot;
-    <a href="https://github.com/TabooHarmony/roblox-owner-tracker">source</a></div>
+  <h1>roblox owner tracker <a href="https://github.com/TabooHarmony/roblox-owner-tracker">github</a></h1>
   <form id="f">
-    <input id="id" inputmode="numeric" pattern="\d*" placeholder="Roblox catalog ID" autocomplete="off">
-    <button id="go" type="submit" disabled>Look up</button>
+    <input id="id" inputmode="numeric" pattern="\d*" placeholder="catalog id" autocomplete="off" autofocus>
+    <button id="go" type="submit" disabled>→</button>
   </form>
   <div id="out"></div>
+  <div class="foot">method by maggy · brackets are intervals, not exact counts · roblox-published items only</div>
 </main>
 <script>
 "use strict";
-
-// ---------- data ----------
-let ANCHORS = null; // { id -> {p, as_of, until, t} } — precomputed eligible closed-final anchors.
-// Eligibility (applied at build time in pipeline, not here): closed sale, all windows
-// resolved, paired count observed strictly after the last close, last close >= 2012,
-// single-channel count, and no post-2020 re-release window (those carry stale counts,
-// e.g. ASCII White's 360 count predates its Nov 2025 return).
-
-// ---------- live walk ----------
+let ANCHORS = null;
 const PX = "https://rbx-proxy.tabooharmony.workers.dev/";
-const WALK_KW_SUFFIX = " red orange yellow green blue pink white";
-const WALK_PARAMS = "&Limit=120&SortType=2&SortAggregation=5&IncludeNotForSale=true&CreatorName=Roblox&CreatorType=User";
-const PAGE_DELAY_MS = 6500;
-const MAX_PAGES = 9;
+const KW = " red orange yellow green blue pink white";
+const PR = "&Limit=120&SortType=2&SortAggregation=5&IncludeNotForSale=true&CreatorName=Roblox&CreatorType=User";
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const fmt = n => Number(n).toLocaleString("en-US");
+const esc = s => { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; };
 
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-async function fetchProxied(path, timeoutMs, retries) {
-  let lastErr;
-  for (let attempt = 0; attempt <= (retries || 0); attempt++) {
-    const ctl = new AbortController();
-    const t = setTimeout(() => ctl.abort(), timeoutMs || 12000);
+async function fetchPx(path, tries) {
+  let err;
+  for (let i = 0; i <= tries; i++) {
     try {
-      const r = await fetch(PX + path, { signal: ctl.signal });
-      if (r.status === 429 && attempt < (retries || 0)) {
-        clearTimeout(t);
-        await sleep(12000);
-        continue;
-      }
+      const r = await fetch(PX + path);
+      if (r.status === 429 && i < tries) { await sleep(12000); continue; }
       if (!r.ok) throw new Error("API " + r.status);
       return await r.json();
     } catch (e) {
-      if (e.name === "AbortError" && attempt < (retries || 0)) { await sleep(4000); continue; }
-      lastErr = e;
-    } finally { clearTimeout(t); }
-    break;
+      if (e.name === "AbortError" && i < tries) { await sleep(4000); continue; }
+      err = e;
+    }
   }
-  throw lastErr;
+  throw err;
 }
 
-// ---------- lookup ----------
-async function lookup(idStr) {
+async function lookup(id) {
   const out = document.getElementById("out");
-  out.innerHTML = "";
-  const id = String(idStr).trim();
-  if (!/^\d+$/.test(id) || +id <= 0) {
-    out.innerHTML = '<div class="card"><div class="err">Enter a numeric Roblox catalog ID.</div></div>';
-    return;
-  }
-  const card = document.createElement("div");
-  card.className = "card";
-  card.textContent = "Fetching item…";
-  out.appendChild(card);
+  const show = h => out.innerHTML = h;
+  if (!/^\d+$/.test(id)) return show('<div class="msg fail">numeric catalog id</div>');
+  show('<div class="msg">…</div>');
 
-  // 1. identity
-  let meta = null;
+  let m;
+  try { m = await fetchPx("economy.roblox.com/v2/assets/" + id + "/details", 0); }
+  catch (e) { return show('<div class="msg fail">could not fetch item</div>'); }
+  if (!m || !m.Name) return show('<div class="msg fail">could not fetch item</div>');
+
+  const head = '<div class="name">' + esc(m.Name) + '</div>';
+  if ((m.Creator && m.Creator.Name) !== "Roblox")
+    return show(head + '<div class="msg">only roblox-published items</div>');
+
+  const kw = m.Name + KW;
+  show(head + '<div class="msg" id="p">searching…</div>');
+  const p = document.getElementById("p");
+
+  let cur = "", ids = [], pos = null, pages = 0;
   try {
-    meta = await fetchProxied("economy.roblox.com/v2/assets/" + id + "/details", 8000);
-  } catch (e) {}
-  if (!meta || !meta.Name) {
-    card.innerHTML = '<div class="err">Could not fetch this item from Roblox. The ID may not exist, or the API is down.</div>';
-    return;
-  }
-  const name = meta.Name;
-  const creator = (meta.Creator && meta.Creator.Name) || "?";
-
-  // 2. Roblox-only scope
-  if (creator !== "Roblox") {
-    card.innerHTML = "<h2>" + esc(name) + "</h2>"
-      + '<div class="meta">ID ' + fmt(+id) + " · by " + esc(creator) + "</div>"
-      + '<div class="note">Only Roblox-published items are supported.</div>';
-    return;
-  }
-
-  // 3. walk: full name + rainbow padding, all-time sales, Roblox creator filter
-  const kw = name + WALK_KW_SUFFIX;
-  let header = "<h2>" + esc(name) + "</h2>"
-    + '<div class="meta">ID ' + fmt(+id)
-    + (meta.Created ? " · created " + esc(String(meta.Created).slice(0, 10)) : "")
-    + (meta.IsForSale ? " · still on sale" : " · off sale")
-    + "</div>";
-  card.innerHTML = header + '<div class="progress">walking…</div>';
-  const prog = card.querySelector(".progress");
-
-  let cursor = "", seen = 0, rank = null, flat = [];
-  let pages = 0;
-  try {
-    while (pages < MAX_PAGES && rank === null) {
-      const url = "catalog.roblox.com/v2/search/items/details?Keyword=" + encodeURIComponent(kw)
-        + WALK_PARAMS + (cursor ? "&Cursor=" + encodeURIComponent(cursor) : "");
-      const d = await fetchProxied(url, 15000, 2);
+    while (pages < 9 && pos === null) {
+      const d = await fetchPx("catalog.roblox.com/v2/search/items/details?Keyword=" +
+        encodeURIComponent(kw) + PR + (cur ? "&Cursor=" + encodeURIComponent(cur) : ""), 2);
       pages++;
-      const data = d.data || [];
-      for (const it of data) {
-        seen++;
-        flat.push([String(it.id), it.name]);
-        if (String(it.id) === id) rank = seen;
+      for (const it of d.data || []) {
+        ids.push(String(it.id));
+        if (String(it.id) === id) pos = ids.length; // 1-based
       }
-      prog.textContent = "walking… page " + pages + ", " + seen + " items scanned";
-      if (rank !== null || !d.nextPageCursor || !data.length) break;
-      cursor = d.nextPageCursor;
-      await sleep(PAGE_DELAY_MS);
+      p.textContent = "searching… " + ids.length;
+      if (pos !== null || !d.nextPageCursor || !(d.data || []).length) break;
+      cur = d.nextPageCursor;
+      await sleep(6500);
     }
   } catch (e) {
-    card.innerHTML = header + '<div class="err">Walk failed: ' + esc(String(e.message || e)) + ".</div>";
-    return;
+    return show(head + '<div class="msg fail">search failed — try again in a minute</div>');
   }
 
-  if (rank === null) {
-    card.innerHTML = header
-      + '<div class="note">Scanned ' + seen + " items in this item's live all-time-sales neighborhood and it doesn't appear — sales this low leave no way to compare, so no estimate.</div>";
-    return;
-  }
+  if (pos === null)
+    return show(head + '<div class="msg">no estimate — item not found in its sales neighborhood</div>');
 
-  // 4. bracket: nearest eligible anchors above/below rank
   let above = null, below = null;
-  for (let j = rank - 2; j >= 0; j--) {          // flat is 0-based; target at index rank-1
-    const a = ANCHORS[flat[j][0]];
-    if (a) { above = { rank: j + 1, name: flat[j][1], a }; break; }
-  }
-  for (let j = rank; j < flat.length; j++) {
-    const a = ANCHORS[flat[j][0]];
-    if (a) { below = { rank: j + 1, name: flat[j][1], a }; break; }
-  }
+  for (let j = pos - 2; j >= 0; j--) if (ANCHORS[ids[j]]) { above = ANCHORS[ids[j]]; break; }
+  for (let j = pos; j < ids.length; j++) if (ANCHORS[ids[j]]) { below = ANCHORS[ids[j]]; break; }
 
-  let html = header
-    + '<div class="note">Scanned the live all-time-sales neighborhood around this item ('
-    + seen + ' items, ' + pages + (pages === 1 ? " page" : " pages") + ").</div>";
+  let ev = "";
+  const row = (a) => a ? '<div>↑ ' + fmt(a.p) + ' — ' + esc(a.t) + ' (' + esc(a.as_of || "") + ')</div>' : '';
+  if (above) ev += row(above);
+  if (below) ev += '<div>↓ ' + fmt(below.p) + ' — ' + esc(below.t) + ' (' + esc(below.as_of || "") + ')</div>';
+  if (ev) ev = '<div class="ev">' + ev + '</div>';
 
-  if (above || below) {
-    html += '<div class="lbl" style="margin-top:.6rem">Evidence</div>';
-    if (above) html += '<div class="anchor"><b>' + fmt(above.a.p) + "</b> purchases — "
-      + esc(above.name) + ' <i>(final count, as of ' + esc(above.a.as_of || "?") + ")</i></div>";
-    html += '<div class="anchor anchor-target"><b>?</b> — <b>' + esc(name) + "</b> (this item)</div>";
-    if (below) html += '<div class="anchor"><b>' + fmt(below.a.p) + "</b> purchases — "
-      + esc(below.name) + ' <i>(final count, as of ' + esc(below.a.as_of || "?") + ")</i></div>";
-    if (above && below) {
-      const hi = above.a.p, lo = below.a.p;
-      if (hi > lo) {
-        html += '<div class="lbl" style="margin-top:.7rem">Estimated purchases</div>'
-          + '<div class="bracket">' + fmt(lo) + " – " + fmt(hi) + "</div>"
-          + '<div class="note">Interval between the two evidenced items above, by all-time sales position. A comparison, not a verified bound.</div>';
-      } else {
-        html += '<div class="note">The neighboring evidence contradicts the sales ranking, so no figure.</div>';
-      }
-    } else {
-      html += '<div class="note">Evidence on only one side — no estimate.</div>';
-    }
-  } else {
-    html += '<div class="note">No evidenced neighbors anywhere in this item' + "'"
-      + "s sales neighborhood — no estimate is possible.</div>";
-  }
-
-  html += "<details><summary>how this was computed</summary><pre>"
-    + "walk: Keyword=\"" + kw + "\" SortType=2 SortAggregation=5, creator=Roblox, "
-    + "includeNotForSale; " + pages + " page(s), " + seen + " items.\n"
-    + "anchors: reviewed wiki purchase records, closed-final items only; "
-    + "post-2021 re-releases excluded (their published counts predate the re-release).\n"
-    + "walked live at " + new Date().toISOString() + "</pre></details>";
-  card.innerHTML = html;
+  if (above && below && above.p > below.p)
+    return show(head + '<div class="num">' + fmt(below.p) + ' – ' + fmt(above.p) + '</div><div class="cap">estimated purchases</div>' + ev);
+  if (above || below)
+    return show(head + '<div class="msg">no estimate — evidence on one side only</div>' + ev);
+  return show(head + '<div class="msg">no estimate — no evidence nearby</div>');
 }
 
-// ---------- helpers ----------
-function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
-function fmt(n) { return Number(n).toLocaleString("en-US"); }
-
-// ---------- init ----------
-(async function () {
+(async () => {
   ANCHORS = await fetch("anchors_eligible.json").then(r => r.json());
   document.getElementById("go").disabled = false;
-  const params = new URLSearchParams(location.search);
-  if (params.get("id")) {
-    document.getElementById("id").value = params.get("id");
-    lookup(params.get("id"));
-  }
+  const v = new URLSearchParams(location.search).get("id");
+  if (v) { document.getElementById("id").value = v; lookup(v); }
 })();
-document.getElementById("f").addEventListener("submit", (e) => {
+document.getElementById("f").addEventListener("submit", e => {
   e.preventDefault();
   const v = document.getElementById("id").value.trim();
   history.replaceState(null, "", "?id=" + encodeURIComponent(v));
