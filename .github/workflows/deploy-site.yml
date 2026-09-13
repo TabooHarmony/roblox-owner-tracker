@@ -1,6 +1,7 @@
 # Deploy the static viewer to GitHub Pages on every push to main.
-# Data files (estimates, crossval summary) are copied from the repo, which is
-# the committed, replay-verified artifact — the site never computes anything.
+# The site's only data inputs are site/anchors_eligible.json and
+# site/rerelease_post2020.json, both built from anchors/anchors_harden.jsonl
+# by pipeline/build_site_data.py. Deploy deploys whatever is committed.
 name: deploy-site
 on:
   push:
@@ -21,12 +22,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Assemble site
-        run: |
-          mkdir -p site/estimates site/docs site/pools
-          cp estimates/estimates_v2.jsonl site/estimates/
-          cp docs/crossval_summary.json site/docs/ || true
-          cp pools/*_wrapped.json site/pools/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

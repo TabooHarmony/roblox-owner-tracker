@@ -27,6 +27,7 @@
   .lbl { color: #9aa3ab; font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; }
   .anchor { border-top: 1px solid #232c34; padding: .55rem 0; font-size: .85rem; }
   .anchor b { color: #cfd6dc; }
+  .anchor-target b { color: #7ab8ff; }
   .note { color: #9aa3ab; font-size: .8rem; margin-top: .6rem; }
   .warn { color: #d9c36a; font-size: .82rem; margin-top: .5rem; }
   .err  { color: #e08a96; font-size: .9rem; }
@@ -159,7 +160,7 @@ async function lookup(idStr) {
 
   if (rank === null) {
     card.innerHTML = header
-      + '<div class="note">Scanned ' + seen + " items in the live all-time-sales ranking for this item's neighborhood — it doesn't appear. Sales this low leave no rank to compare against, so no estimate is possible.</div>";
+      + '<div class="note">Scanned ' + seen + " items in this item's live all-time-sales neighborhood and it doesn't appear — sales this low leave no way to compare, so no estimate.</div>";
     return;
   }
 
@@ -175,34 +176,31 @@ async function lookup(idStr) {
   }
 
   let html = header
-    + '<div class="note">Rank <b>' + rank + "</b> of " + seen
-    + " in today's all-time-sales neighborhood for this item (live walk, "
-    + pages + (pages === 1 ? " page" : " pages") + ").</div>";
+    + '<div class="note">Scanned the live all-time-sales neighborhood around this item ('
+    + seen + ' items, ' + pages + (pages === 1 ? " page" : " pages") + ").</div>";
 
   if (above || below) {
-    html += '<div class="lbl" style="margin-top:.6rem">Nearest evidenced neighbors</div>';
-    if (above) html += '<div class="anchor">rank ' + above.rank + " · " + esc(above.name)
-      + " · <b>" + fmt(above.a.p) + "</b> purchases <i>(final count, as of "
-      + esc(above.a.as_of || "?") + ")</i></div>";
-    html += '<div class="anchor">rank ' + rank + " · <b>" + esc(name) + "</b> (this item)</div>";
-    if (below) html += '<div class="anchor">rank ' + below.rank + " · " + esc(below.name)
-      + " · <b>" + fmt(below.a.p) + "</b> purchases <i>(final count, as of "
-      + esc(below.a.as_of || "?") + ")</i></div>";
+    html += '<div class="lbl" style="margin-top:.6rem">Evidence</div>';
+    if (above) html += '<div class="anchor"><b>' + fmt(above.a.p) + "</b> purchases — "
+      + esc(above.name) + ' <i>(final count, as of ' + esc(above.a.as_of || "?") + ")</i></div>";
+    html += '<div class="anchor anchor-target"><b>?</b> — <b>' + esc(name) + "</b> (this item)</div>";
+    if (below) html += '<div class="anchor"><b>' + fmt(below.a.p) + "</b> purchases — "
+      + esc(below.name) + ' <i>(final count, as of ' + esc(below.a.as_of || "?") + ")</i></div>";
     if (above && below) {
       const hi = above.a.p, lo = below.a.p;
       if (hi > lo) {
-        html += '<div class="lbl" style="margin-top:.6rem">Estimated total purchases</div>'
+        html += '<div class="lbl" style="margin-top:.7rem">Estimated purchases</div>'
           + '<div class="bracket">' + fmt(lo) + " – " + fmt(hi) + "</div>"
-          + '<div class="note">Rank-neighbor interval between the two evidenced items above. This is a comparison, not a verified bound — rankings drift and era differences within an interval can skew it.</div>';
+          + '<div class="note">Interval between the two evidenced items above, by all-time sales position. A comparison, not a verified bound.</div>';
       } else {
-        html += '<div class="note">No bracket: the neighbors' + "'" + ' recorded counts contradict the ranking order, so no clean interval exists.</div>';
+        html += '<div class="note">The neighboring evidence contradicts the sales ranking, so no figure.</div>';
       }
     } else {
-      html += '<div class="note">Evidence on only one side of the rank — no interval possible.</div>';
+      html += '<div class="note">Evidence on only one side — no estimate.</div>';
     }
   } else {
-    html += '<div class="note">No evidenced neighbors anywhere on this item' + "'"
-      + "s sales ranking — nothing to compare against.</div>";
+    html += '<div class="note">No evidenced neighbors anywhere in this item' + "'"
+      + "s sales neighborhood — no estimate is possible.</div>";
   }
 
   html += "<details><summary>how this was computed</summary><pre>"
