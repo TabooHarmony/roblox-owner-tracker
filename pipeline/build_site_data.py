@@ -60,7 +60,7 @@ def main():
         if (r.get("sale_state") == "closed" and wins
                 and all(w.get("state") == "resolved" for w in wins)
                 and isinstance(p, int) and p >= 0
-                and a and u and a > u and u[0] >= 2012
+                and a and u and a > u and u[0] >= 2009
                 and r.get("purchase_count_scope") == "single"):
             eligible[iid] = {"p": p, "as_of": r["purchased_as_of"],
                              "until": r["until"],
