@@ -54,7 +54,7 @@ async function fetchPx(path, tries) {
   for (let i = 0; i <= tries; i++) {
     try {
       const r = await fetch(PX + path);
-      if (r.status === 429 && i < tries) { await sleep(12000); continue; }
+      if (r.status === 429 && i < tries) { await sleep(Math.min(45000, 12000 * (i + 1))); continue; }
       if (!r.ok) throw new Error("API " + r.status);
       return await r.json();
     } catch (e) {
@@ -80,46 +80,70 @@ async function lookup(id) {
   if ((m.Creator && m.Creator.Name) !== "Roblox")
     return show(head + '<div class="msg">only roblox-published items</div>');
 
-  const kw = m.Name + KW;
-  show(head + '<div class="msg" id="p">searching…</div>');
-  const p = document.getElementById("p");
+  let fallbackTried = false;
 
-  let cur = "", ids = [], pos = null, pages = 0;
-  try {
+  async function walk(nameStr) {
+    const kw = nameStr + KW;
+    let cur = "", ids = [], pos = null, pages = 0;
     while (pages < 9 && pos === null) {
       const d = await fetchPx("catalog.roblox.com/v2/search/items/details?Keyword=" +
         encodeURIComponent(kw) + PR + (cur ? "&Cursor=" + encodeURIComponent(cur) : ""), 2);
       pages++;
       for (const it of d.data || []) {
         ids.push(String(it.id));
-        if (String(it.id) === id) pos = ids.length; // 1-based
+        if (String(it.id) === id) pos = ids.length;
       }
       p.textContent = "searching… " + ids.length;
       if (pos !== null || !d.nextPageCursor || !(d.data || []).length) break;
       cur = d.nextPageCursor;
-      await sleep(6500);
+      await sleep(9000);
     }
-  } catch (e) {
-    return show(head + '<div class="msg fail">search failed — try again in a minute</div>');
+    let above = null, below = null;
+    if (pos !== null) {
+      for (let j = pos - 2; j >= 0; j--) if (ANCHORS[ids[j]]) { above = ANCHORS[ids[j]]; break; }
+      for (let j = pos; j < ids.length; j++) if (ANCHORS[ids[j]]) { below = ANCHORS[ids[j]]; break; }
+    }
+    return { ids, pos, above, below };
   }
 
+  const evOf = (a, b) => {
+    let ev = "";
+    if (a) ev += '<div>↑ ' + fmt(a.p) + ' — ' + esc(a.t) + ' (' + esc(a.as_of || "") + ')</div>';
+    if (b) ev += '<div>↓ ' + fmt(b.p) + ' — ' + esc(b.t) + ' (' + esc(b.as_of || "") + ')</div>';
+    return ev ? '<div class="ev">' + ev + '</div>' : '';
+  };
+
+  show(head + '<div class="msg" id="p">searching…</div>');
+  const p = document.getElementById("p");
+
+  let r;
+  try { r = await walk(m.Name); }
+  catch (e) { return show(head + '<div class="msg fail">search failed — try again in a minute</div>'); }
+
+  const pos = r.pos, above = r.above, below = r.below;
   if (pos === null)
-    return show(head + '<div class="msg">no estimate — item not found in its sales neighborhood</div>');
-
-  let above = null, below = null;
-  for (let j = pos - 2; j >= 0; j--) if (ANCHORS[ids[j]]) { above = ANCHORS[ids[j]]; break; }
-  for (let j = pos; j < ids.length; j++) if (ANCHORS[ids[j]]) { below = ANCHORS[ids[j]]; break; }
-
-  let ev = "";
+    return show(head + '<div class="msg">rank unresolved — too many same-word sellers ahead of it</div>');
   const row = (a) => a ? '<div>↑ ' + fmt(a.p) + ' — ' + esc(a.t) + ' (' + esc(a.as_of || "") + ')</div>' : '';
   if (above) ev += row(above);
   if (below) ev += '<div>↓ ' + fmt(below.p) + ' — ' + esc(below.t) + ' (' + esc(below.as_of || "") + ')</div>';
   if (ev) ev = '<div class="ev">' + ev + '</div>';
 
   if (above && below && above.p > below.p)
-    return show(head + '<div class="num">' + fmt(below.p) + ' – ' + fmt(above.p) + '</div><div class="cap">estimated purchases</div>' + ev);
+    return show(head + '<div class="num">' + fmt(below.p) + ' – ' + fmt(above.p) + '</div><div class="cap">estimated purchases</div>' + evOf(above, below));
+  if (!fallbackTried && (above || below)) {
+    p.textContent = "searching (narrower keyword)…";
+    const shorter = m.Name.split(/[—–\-:;(),]/)[0].trim();
+    if (shorter !== m.Name && shorter.length >= 4) {
+      fallbackTried = true;
+      try {
+        const r2 = await walk(shorter);
+        if (r2.pos !== null && r2.above && r2.below && r2.above.p > r2.below.p)
+          return show(head + '<div class="num">' + fmt(r2.below.p) + ' – ' + fmt(r2.above.p) + '</div><div class="cap">estimated purchases</div>' + evOf(r2.above, r2.below));
+      } catch (e2) {}
+    }
+  }
   if (above || below)
-    return show(head + '<div class="msg">no estimate — evidence on one side only</div>' + ev);
+    return show(head + '<div class="msg">no estimate — evidence on one side only</div>' + evOf(above, below));
   return show(head + '<div class="msg">no estimate — no evidence nearby</div>');
 }
 
