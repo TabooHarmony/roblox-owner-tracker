@@ -38,6 +38,8 @@ def pdate(s):
 
 def main():
     rows = [json.loads(l) for l in open(os.path.join(ROOT, "anchors/anchors_harden.jsonl"))]
+    if os.path.exists(os.path.join(ROOT, "anchors/anchors_harden_rescued.jsonl")):
+        rows += [json.loads(l) for l in open(os.path.join(ROOT, "anchors/anchors_harden_rescued.jsonl"))]
     denied = {}
     eligible = {}
 
