@@ -24,11 +24,13 @@ Round-3 fixes (Astra HOLD at 4acbc0f):
 import re
 
 DATE = r"[A-Z][a-z]+ \d{1,2}, \d{4}"
-# Scoped identity: search infobox parameter lines ONLY (line starts with | inside the
-# infobox span), so literal examples in <nowiki> or prose cannot shadow the real id.
+# Scoped identity: search infobox parameter ONLY (inside the infobox span), so
+# literal examples in <nowiki> or prose cannot shadow the real id. Mid-line
+# params match: the wiki's current infobox format puts |image = X.png|id = N
+# on one line (the old line-anchored regex silently missed those pages).
 RE_INFOBOX = re.compile(r"\{\{\s*[Ii]nfobox[^}]*\}\}", re.S)
-RE_ID = re.compile(r"^\s*\|\s*(?:catalog\s+)?id\s*=\s*(\d+)", re.M | re.I)
-RE_BUNDLE_ID = re.compile(r"^\s*\|\s*bundle\s+id\s*=\s*(\d+)", re.M | re.I)
+RE_ID = re.compile(r"\|\s*(?:catalog\s+)?id\s*=\s*(\d+)", re.I)
+RE_BUNDLE_ID = re.compile(r"\|\s*bundle\s+id\s*=\s*(\d+)", re.I)
 
 # Window fields: until, until2..untilN, from, from2..fromN (position = window order)
 RE_UNTIL_FIELD = re.compile(r"^\s*\|\s*until(\d*)\s*=\s*(.*?)\s*$", re.M)

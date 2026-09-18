@@ -45,6 +45,8 @@ def main():
 
     for r in rows:
         iid = str(r["item_id"])
+        if iid == "None":
+            continue
         if r.get("parse_notes", []) and "entity_type:bundle" in r["parse_notes"]:
             continue
         wins = r.get("windows") or []
