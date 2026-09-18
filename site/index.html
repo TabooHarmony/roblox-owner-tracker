@@ -123,11 +123,6 @@ async function lookup(id) {
   const pos = r.pos, above = r.above, below = r.below;
   if (pos === null)
     return show(head + '<div class="msg">rank unresolved — too many same-word sellers ahead of it</div>');
-  const row = (a) => a ? '<div>↑ ' + fmt(a.p) + ' — ' + esc(a.t) + ' (' + esc(a.as_of || "") + ')</div>' : '';
-  if (above) ev += row(above);
-  if (below) ev += '<div>↓ ' + fmt(below.p) + ' — ' + esc(below.t) + ' (' + esc(below.as_of || "") + ')</div>';
-  if (ev) ev = '<div class="ev">' + ev + '</div>';
-
   if (above && below && above.p > below.p)
     return show(head + '<div class="num">' + fmt(below.p) + ' – ' + fmt(above.p) + '</div><div class="cap">estimated purchases</div>' + evOf(above, below));
   if (!fallbackTried && (above || below)) {
