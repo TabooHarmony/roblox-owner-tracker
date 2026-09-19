@@ -96,6 +96,8 @@ async function lookup(id) {
     (typeof price === "number" ? ' · ' + (price === 0 ? 'free' : fmt(price) + ' robux') : '') + '</div></div></div>';
   if ((m.Creator && m.Creator.Name) !== "Roblox")
     return show(head + '<div class="msg">not supported — estimates only cover items published by roblox the account, not ugc creators or groups</div>');
+  if (m.IsLimited || m.IsLimitedUnique)
+    return show(head + '<div class="msg">not supported — limiteds have exact owner counts on rolimons, best-selling rank is not a good estimate for them</div>');
 
   let fallbackTried = false;
 
