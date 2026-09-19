@@ -37,7 +37,7 @@
     <button id="go" type="submit" disabled>→</button>
   </form>
   <div id="out"></div>
-  <div class="foot">method by maggy · brackets are intervals, not exact counts · roblox-published items only</div>
+  <div class="foot">not supported: ugc items, group items, non-roblox creators</div>
 </main>
 <script>
 "use strict";
@@ -82,7 +82,7 @@ async function lookup(id) {
 
   const head = '<div class="name">' + esc(m.Name) + '</div>';
   if ((m.Creator && m.Creator.Name) !== "Roblox")
-    return show(head + '<div class="msg">only roblox-published items</div>');
+    return show(head + '<div class="msg">not supported</div>');
 
   let fallbackTried = false;
 
