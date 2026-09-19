@@ -20,6 +20,10 @@
   button:disabled { opacity: .4; cursor: default; }
   .r { display: none; }
   .name { font-size: 1.1rem; font-weight: 600; }
+  .hdr { display: flex; align-items: center; gap: .8rem; margin: .2rem 0 .6rem; }
+  .hdr img { width: 64px; height: 64px; border-radius: 8px; background: #161c22; }
+  .hdr .name { font-size: 1.1rem; font-weight: 600; }
+  .hdr .sub { color: #9aa3ab; font-size: .78rem; margin-top: .15rem; }
   .num { font-size: 2.4rem; font-weight: 700; margin: .5rem 0 .1rem; }
   .cap { color: #9aa3ab; font-size: .8rem; }
   .ev { color: #9aa3ab; font-size: .8rem; margin-top: 1rem; line-height: 1.7; }
@@ -77,12 +81,21 @@ async function lookup(id) {
 
   let m;
   try { m = await fetchPx("economy.roblox.com/v2/assets/" + id + "/details", 0); }
-  catch (e) { return show('<div class="msg fail">could not fetch item</div>'); }
-  if (!m || !m.Name) return show('<div class="msg fail">could not fetch item</div>');
+  catch (e) { return show('<div class="msg fail">roblox api did not respond — try again in a minute</div>'); }
+  if (!m || !m.Name) return show('<div class="msg fail">no item with that id — check the number and try again</div>');
 
-  const head = '<div class="name">' + esc(m.Name) + '</div>';
+  let thumb = "";
+  try {
+    const t = await fetchPx("thumbnails.roblox.com/v1/assets?assetIds=" + id + "&returnPolicy=PlaceHolder&size=150x150&format=Png", 0);
+    if (t && t.data && t.data[0] && t.data[0].imageUrl && t.data[0].state === "Completed")
+      thumb = '<img src="' + esc(t.data[0].imageUrl) + '" alt="" onerror="this.remove()">';
+  } catch (e) {}
+  const price = m.PriceInRobux;
+  const head = '<div class="hdr">' + thumb + '<div><div class="name">' + esc(m.Name) + '</div>' +
+    '<div class="sub">by ' + esc((m.Creator && m.Creator.Name) || "?") +
+    (typeof price === "number" ? ' · ' + (price === 0 ? 'free' : fmt(price) + ' robux') : '') + '</div></div></div>';
   if ((m.Creator && m.Creator.Name) !== "Roblox")
-    return show(head + '<div class="msg">not supported</div>');
+    return show(head + '<div class="msg">not supported — estimates only cover items published by roblox the account, not ugc creators or groups</div>');
 
   let fallbackTried = false;
 
